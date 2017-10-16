@@ -20,7 +20,7 @@ def get_relevant_terms(text_doc, stop_words):
     stop_words = set(stop_words)
     terms = [token for token in tokens if token not in stop_words and len(token) >= MIN_SIZE]
     terms_dist = FreqDist(terms)
-    terms_limit = terms_dist.N() * LIMIT
+    terms_limit = int(terms_dist.N() * LIMIT)
     freq_count = 0
     relevant_terms = set()
     for term, freq in terms_dist.most_common():
@@ -87,7 +87,7 @@ def compute_sentence_query_relevance(sentence, query):
 
 def summarize_document(text_doc, stop_words, max_size=None, query=None, max_sent=None, w_query=None, w_sent=None):
     all_sentences = get_sentences(text_doc)
-    if query is not None:
+    if query is None:
         max_sent = int(len(all_sentences) * max_size)
     relevant_terms = get_relevant_terms(text_doc, stop_words)
     all_relevances = []
@@ -113,3 +113,21 @@ def generate_summary(text_doc, stop_words, max_size):
 def generate_snippet(text_doc, stop_words, max_sentences, query, query_weight=0.6, sent_weight=0.4):
     query = [token.lower() for token in query]
     return summarize_document(text_doc, stop_words, None, query, max_sentences, query_weight, sent_weight)
+
+
+def update_supersnippet(supersnippet, snippet, max_sentences, threshold):
+    terms_supersnippet = set()
+    for sentence in supersnippet:
+        terms_sent = set([token for token in word_tokenize(sentence) if len(token) >= MIN_SIZE])
+        terms_supersnippet.add(terms_sent)
+    new_supersnippet = list(supersnippet)
+    for sentence in snippet:
+        terms_sent = set([token for token in word_tokenize(sentence) if len(token) >= MIN_SIZE])
+        same_terms = terms_sent & terms_supersnippet
+        if len(terms_sent) / float(len(same_terms)) <= threshold:
+            new_supersnippet.append(sentence)
+        if len(new_supersnippet) > max_sentences:
+            new_supersnippet.pop(0)
+        new_terms = terms_sent - terms_supersnippet
+        terms_supersnippet.add(new_terms)
+    return new_supersnippet
