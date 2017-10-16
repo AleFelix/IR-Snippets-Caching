@@ -4,6 +4,15 @@ import warc
 from bs4 import BeautifulSoup
 
 
+def get_document_path(root_corpus, id_doc):
+    items_id_doc = id_doc.split("-")
+    section = items_id_doc[1]
+    section_num = section[:2]
+    filename = section + "-" + items_id_doc[2] + ".warc.gz"
+    path_doc = root_corpus + section_num + "/" + section + "/" + filename
+    return path_doc
+
+
 def get_html_doc(id_doc, path_doc):
     html_doc = None
     file_doc = warc.open(path_doc)

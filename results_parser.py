@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import codecs
-from document_parser import get_html_doc, clean_html
-from document_summarizer import summarize_document, generate_snippet
+from document_parser import get_html_doc, clean_html, get_document_path
+from document_summarizer import generate_snippet
 
 ROOT_CORPUS = "clueweb12/ClueWeb12_"
 MAX_SENTENCES = 3
@@ -26,19 +26,10 @@ def load_results(path_results):
             if id_query not in dict_results:
                 dict_results[id_query] = {"ids_docs": [], "paths_docs": []}
             id_doc = items_result[2]
-            path_doc = get_document_path(id_doc)
+            path_doc = get_document_path(ROOT_CORPUS, id_doc)
             dict_results[id_query]["ids_docs"].append(id_doc)
             dict_results[id_query]["paths_docs"].append(path_doc)
     return dict_results
-
-
-def get_document_path(id_doc):
-    items_id_doc = id_doc.split("-")
-    section = items_id_doc[1]
-    section_num = section[:2]
-    filename = section + "-" + items_id_doc[2] + ".warc.gz"
-    path_doc = ROOT_CORPUS + section_num + "/" + section + "/" + filename
-    return path_doc
 
 
 def main():
