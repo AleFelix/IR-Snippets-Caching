@@ -7,6 +7,7 @@ from document_summarizer import generate_snippet
 ROOT_CORPUS = "clueweb12/ClueWeb12_"
 MAX_SENTENCES = 3
 PATH_STOPWORDS = "stopwords/stopword-list.txt"
+PATH_RESULTS = "result_list/InL2c1.0_0.res"
 
 
 def load_stopwords(path_stopwords):
@@ -17,7 +18,7 @@ def load_stopwords(path_stopwords):
     return stopwords
 
 
-def load_results(path_results):
+def load_results(root_corpus, path_results):
     dict_results = {}
     with codecs.open(path_results, mode="r", encoding="utf-8") as file_results:
         for line_result in file_results:
@@ -26,7 +27,7 @@ def load_results(path_results):
             if id_query not in dict_results:
                 dict_results[id_query] = {"ids_docs": [], "paths_docs": []}
             id_doc = items_result[2]
-            path_doc = get_document_path(ROOT_CORPUS, id_doc)
+            path_doc = get_document_path(root_corpus, id_doc)
             dict_results[id_query]["ids_docs"].append(id_doc)
             dict_results[id_query]["paths_docs"].append(path_doc)
     return dict_results
@@ -34,7 +35,7 @@ def load_results(path_results):
 
 def main():
     stopwords = load_stopwords(PATH_STOPWORDS)
-    dic_r = load_results("result_list/InL2c1.0_0.res")
+    dic_r = load_results(ROOT_CORPUS, PATH_RESULTS)
     for query in dic_r:
         print query
         print dic_r[query]["ids_docs"]
