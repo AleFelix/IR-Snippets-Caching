@@ -4,20 +4,23 @@ import codecs
 from document_parser import get_document_path, get_html_doc, clean_html
 from document_summarizer import generate_snippet, generate_summary
 from cache_manager import DocumentsCache
+from timer import Timer
 
 RESULT_LIST_LENGTH = 10
 
 
 class SnippetAnalyzer(object):
-    def __init__(self, path_results, path_queries, path_stopwords, root_corpus, max_sentences, max_queries,
-                 surrogate_size, cache_size):
+    def __init__(self, path_results, path_queries, path_stopwords, root_corpus, snippet_size, max_queries,
+                 surrogate_size, ssnippet_size, ssnippet_threshold, cache_size):
         self.path_results = path_results
         self.path_queries = path_queries
         self.path_stopwords = path_stopwords
         self.root_corpus = root_corpus
-        self.max_sentences = max_sentences
+        self.snippet_size = snippet_size
         self.max_queries = max_queries
         self.surrogate_size = surrogate_size
+        self.ssnippet_size = ssnippet_size
+        self.ssnippet_threshold = ssnippet_threshold
         self.stopwords = None
         self.last_query_line = -1
         self.last_results_line = -1
@@ -28,6 +31,7 @@ class SnippetAnalyzer(object):
         self.more_queries = None
         self.cache_docs = DocumentsCache(cache_size)
         self.cache_surrogates = DocumentsCache(cache_size)
+        self.timer = Timer()
 
     def load_stopwords(self):
         self.stopwords = []
@@ -89,17 +93,28 @@ class SnippetAnalyzer(object):
                 self.analyze_surrogate(query, id_doc)
 
     def analyze_document(self, query, id_doc):
+        self.timer.reset()
+        self.timer.start()
         text_doc = self.cache_docs.get_document(id_doc)
         if text_doc is None:
             path_doc = self.filepath_docs[id_doc]
             text_doc = clean_html(get_html_doc(id_doc, path_doc))
             self.cache_docs.add_document(id_doc, text_doc)
-        generate_snippet(text_doc, self.stopwords, self.max_sentences, query)
+        generate_snippet(text_doc, self.stopwords, self.snippet_size, query)
+        self.timer.stop()
 
     def analyze_surrogate(self, query, id_doc):
+        self.timer.reset()
+        self.timer.start()
         surrogate = self.cache_surrogates.get_document(id_doc)
         if surrogate is None:
             path_doc = self.filepath_docs[id_doc]
             text_doc = clean_html(get_html_doc(id_doc, path_doc))
+            self.timer.stop()
             surrogate = generate_summary(text_doc, self.stopwords, self.surrogate_size)
-        generate_snippet(surrogate, self.stopwords, self.max_sentences, query)
+            self.timer.start()
+        generate_snippet(surrogate, self.stopwords, self.snippet_size, query)
+        self.timer.stop()
+
+    def analyze_supersnippet(self, query, id_doc):
+        pass
