@@ -2,3 +2,5 @@
 /env_v2/
 /.idea/
 *.pyc
+/.pytest_cache/
+/py_env/

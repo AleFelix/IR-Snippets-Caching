@@ -34,48 +34,48 @@ def get_relevant_terms(text_doc, stop_words):
 def compute_sentence_relevance(sentence, relevant_terms):
     sentence = [token.lower() for token in word_tokenize(sentence) if len(token) >= MIN_SIZE]
     segments_relevance = []
-    number_relevants = 0
-    number_terms = 0
-    number_total_terms = 0
+    number_relevants_segment = 0
+    number_terms_found = 0
+    number_terms_segment = 0
     start_position = None
-    temp_end_position = None
     end_position = None
+    close_segment = False
     for position, term in enumerate(sentence):
         if start_position is None:
             if term in relevant_terms:
                 start_position = position
-                temp_end_position = position
-                number_relevants += 1
-                number_terms += 1
-                number_total_terms = number_terms
+                end_position = position
+                number_relevants_segment += 1
+                number_terms_found += 1
+                number_terms_segment = number_terms_found
         else:
-            if position - temp_end_position < MAX_DISTANCE:
+            if position - end_position <= MAX_DISTANCE:
                 if term in relevant_terms:
-                    temp_end_position = position
-                    number_relevants += 1
-                    number_terms += 1
-                    number_total_terms = number_terms
+                    end_position = position
+                    number_relevants_segment += 1
+                    number_terms_found += 1
+                    number_terms_segment = number_terms_found
                 else:
-                    number_terms += 1
-                if position == len(sentence) - 1:
-                    end_position = temp_end_position
+                    number_terms_found += 1
             else:
-                end_position = temp_end_position
-        if end_position is not None:
-            relevance = (number_relevants ** 2) / float(number_total_terms)
+                close_segment = True
+        if position == len(sentence) - 1 and number_terms_segment > 0:
+            close_segment = True
+        if close_segment:
+            relevance = (number_relevants_segment ** 2) / float(number_terms_segment)
             segments_relevance.append(relevance)
             start_position = None
-            temp_end_position = None
             end_position = None
-            number_relevants = 0
-            number_terms = 0
-            number_total_terms = 0
+            close_segment = False
+            number_relevants_segment = 0
+            number_terms_found = 0
+            number_terms_segment = 0
             if position < len(sentence) - 1 and term in relevant_terms:
                 start_position = position
-                temp_end_position = position
-                number_relevants += 1
-                number_terms += 1
-                number_total_terms = number_terms
+                end_position = position
+                number_relevants_segment += 1
+                number_terms_found += 1
+                number_terms_segment = number_terms_found
     return max(segments_relevance) if segments_relevance else 0
 
 
