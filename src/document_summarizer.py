@@ -107,7 +107,7 @@ def summarize_document(text_doc, stop_words, max_size=None, query=None, max_sent
 
 
 def generate_summary(text_doc, stop_words, max_size):
-    return summarize_document(text_doc, stop_words, max_size)
+    return " ".join(summarize_document(text_doc, stop_words, max_size))
 
 
 def generate_snippet(text_doc, stop_words, max_sentences, query, query_weight=0.6, sent_weight=0.4):

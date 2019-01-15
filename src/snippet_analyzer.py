@@ -47,7 +47,7 @@ class SnippetAnalyzer(object):
             for index, line in enumerate(file_queries):
                 if index > self.last_query_line:
                     query = line.strip().split()
-                    self.id_queries[index] = query
+                    self.id_queries[index + 1] = query
                     self.last_query_line += 1
                     self.num_of_loaded_queries += 1
                 if self.num_of_loaded_queries == self.max_queries:
@@ -63,7 +63,7 @@ class SnippetAnalyzer(object):
             for index, line in enumerate(file_results):
                 if index > self.last_results_line:
                     items_result = line.strip().split()
-                    id_query = items_result[1]
+                    id_query = int(items_result[0])
                     if id_query not in self.results_per_id_query:
                         self.results_per_id_query[id_query] = []
                     id_doc = items_result[2]
@@ -86,11 +86,12 @@ class SnippetAnalyzer(object):
 
     def analyze_queries(self):
         for id_query in self.id_queries:
-            query = self.id_queries[id_query]
-            id_docs = self.results_per_id_query[id_query]
-            for id_doc in id_docs:
-                self.analyze_document(query, id_doc)
-                self.analyze_surrogate(query, id_doc)
+            if id_query in self.results_per_id_query:
+                query = self.id_queries[id_query]
+                id_docs = self.results_per_id_query[id_query]
+                for id_doc in id_docs:
+                    self.analyze_document(query, id_doc)
+                    self.analyze_surrogate(query, id_doc)
 
     def analyze_document(self, query, id_doc):
         self.timer.reset()
