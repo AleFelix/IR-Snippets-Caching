@@ -86,6 +86,7 @@ class SnippetAnalyzer(object):
 
     def analyze_queries(self):
         for id_query in self.id_queries:
+            print "DEBUG: Query N°" + str(id_query)
             if id_query in self.results_per_id_query:
                 query = self.id_queries[id_query]
                 id_docs = self.results_per_id_query[id_query]
