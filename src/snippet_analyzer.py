@@ -2,7 +2,7 @@
 
 import codecs
 from document_parser import get_document_path, get_html_doc, clean_html
-from document_summarizer import generate_snippet, generate_summary
+from document_summarizer import generate_snippet, generate_summary, update_supersnippet
 from cache_manager import DocumentsCache
 from timer import Timer
 
@@ -31,6 +31,7 @@ class SnippetAnalyzer(object):
         self.more_queries = None
         self.cache_docs = DocumentsCache(cache_size)
         self.cache_surrogates = DocumentsCache(cache_size)
+        self.cache_ssnippets = DocumentsCache(cache_size)
         self.timer = Timer()
 
     def load_stopwords(self):
@@ -86,36 +87,77 @@ class SnippetAnalyzer(object):
 
     def analyze_queries(self):
         for id_query in self.id_queries:
+            print "QUERY °" + str(id_query)
             if id_query in self.results_per_id_query:
                 query = self.id_queries[id_query]
                 id_docs = self.results_per_id_query[id_query]
                 for id_doc in id_docs:
                     self.analyze_document(query, id_doc)
                     self.analyze_surrogate(query, id_doc)
+                    self.analyze_supersnippet(query, id_doc)
 
     def analyze_document(self, query, id_doc):
-        self.timer.reset()
-        self.timer.start()
+        # self.timer.reset()
+        # self.timer.start()
         text_doc = self.cache_docs.get_document(id_doc)
         if text_doc is None:
             path_doc = self.filepath_docs[id_doc]
-            text_doc = clean_html(get_html_doc(id_doc, path_doc))
+            self.timer.restart()
+            text_doc = get_html_doc(id_doc, path_doc)
+            self.timer.stop()
+            print "LECTURA DOC: " + str(self.timer.total_time)
+            self.timer.restart()
+            text_doc = clean_html(text_doc)
+            self.timer.stop()
+            print "LIMPIEZA DOC: " + str(self.timer.total_time)
             self.cache_docs.add_document(id_doc, text_doc)
+        self.timer.restart()
         generate_snippet(text_doc, self.stopwords, self.snippet_size, query)
         self.timer.stop()
+        print "GENERACIÓN SNIPPET: " + str(self.timer.total_time)
+        # self.timer.stop()
 
     def analyze_surrogate(self, query, id_doc):
-        self.timer.reset()
-        self.timer.start()
+        # self.timer.reset()
+        # self.timer.start()
         surrogate = self.cache_surrogates.get_document(id_doc)
         if surrogate is None:
             path_doc = self.filepath_docs[id_doc]
-            text_doc = clean_html(get_html_doc(id_doc, path_doc))
+            self.timer.restart()
+            text_doc = get_html_doc(id_doc, path_doc)
             self.timer.stop()
+            print "LECTURA DOC S: " + str(self.timer.total_time)
+            self.timer.restart()
+            text_doc = clean_html(text_doc)
+            self.timer.stop()
+            print "LIMPIEZA DOC S: " + str(self.timer.total_time)
+            # self.timer.stop()
+            self.timer.restart()
             surrogate = generate_summary(text_doc, self.stopwords, self.surrogate_size)
-            self.timer.start()
+            # self.timer.start()
+            self.cache_surrogates.add_document(id_doc, surrogate)
+        self.timer.restart()
         generate_snippet(surrogate, self.stopwords, self.snippet_size, query)
         self.timer.stop()
+        print "GENERACIÓN SNIPPET S: " + str(self.timer.total_time)
+        # self.timer.stop()
 
     def analyze_supersnippet(self, query, id_doc):
-        pass
+        ssnippet = self.cache_ssnippets.get_document(id_doc)
+        if ssnippet is None:
+            path_doc = self.filepath_docs[id_doc]
+            self.timer.restart()
+            text_doc = get_html_doc(id_doc, path_doc)
+            self.timer.stop()
+            print "LECTURA DOC SS: " + str(self.timer.total_time)
+            self.timer.restart()
+            text_doc = clean_html(text_doc)
+            self.timer.stop()
+            print "LIMPIEZA DOC SS: " + str(self.timer.total_time)
+            snippet = generate_snippet(text_doc, self.stopwords, self.snippet_size, query)
+            ssnippet = update_supersnippet(ssnippet, snippet, self.ssnippet_size, self.ssnippet_threshold)
+            self.cache_ssnippets.add_document(id_doc, ssnippet)
+        self.timer.restart()
+        snippet = generate_snippet(ssnippet, self.stopwords, self.snippet_size, query)
+        self.timer.stop()
+        print "GENERACIÓN SNIPPET SS: " + str(self.timer.total_time)

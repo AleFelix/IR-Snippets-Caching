@@ -86,9 +86,10 @@ def compute_sentence_query_relevance(sentence, query):
 
 
 def summarize_document(text_doc, stop_words, max_size=None, query=None, max_sent=None, w_query=None, w_sent=None):
+    text_doc = " ".join(text_doc) if type(text_doc) is list else text_doc
     all_sentences = get_sentences(text_doc)
     if query is None:
-        max_sent = int(len(all_sentences) * max_size)
+        max_sent = int(len(all_sentences) * float(max_size))
     relevant_terms = get_relevant_terms(text_doc, stop_words)
     all_relevances = []
     for sentence in all_sentences:
@@ -107,7 +108,7 @@ def summarize_document(text_doc, stop_words, max_size=None, query=None, max_sent
 
 
 def generate_summary(text_doc, stop_words, max_size):
-    return " ".join(summarize_document(text_doc, stop_words, max_size))
+    return summarize_document(text_doc, stop_words, max_size)
 
 
 def generate_snippet(text_doc, stop_words, max_sentences, query, query_weight=0.6, sent_weight=0.4):
@@ -116,18 +117,28 @@ def generate_snippet(text_doc, stop_words, max_sentences, query, query_weight=0.
 
 
 def update_supersnippet(supersnippet, snippet, max_sentences, threshold):
-    terms_supersnippet = set()
-    for sentence in supersnippet:
-        terms_sent = set([token for token in word_tokenize(sentence) if len(token) >= MIN_SIZE])
-        terms_supersnippet.add(terms_sent)
-    new_supersnippet = list(supersnippet)
+    sets_supersnippet = []
+    if supersnippet is not None:
+        for sentence_ss in supersnippet:
+            terms_sent_ss = set([token for token in word_tokenize(sentence_ss) if len(token) >= MIN_SIZE])
+            sets_supersnippet.append(terms_sent_ss)
+    new_supersnippet = [] if supersnippet is None else list(supersnippet)
     for sentence in snippet:
         terms_sent = set([token for token in word_tokenize(sentence) if len(token) >= MIN_SIZE])
-        same_terms = terms_sent & terms_supersnippet
-        if len(terms_sent) / float(len(same_terms)) <= threshold:
+        best_match = {"index": None, "sim": 0}
+        for index, terms_sent_ss in enumerate(sets_supersnippet):
+            same_terms = terms_sent & terms_sent_ss
+            sim = len(same_terms) / float(len(terms_sent)) if len(terms_sent) > 0 else 0
+            if best_match["index"] is None or best_match["sim"] < sim:
+                best_match["index"] = index
+                best_match["sim"] = sim
+        if best_match["sim"] <= threshold:
             new_supersnippet.append(sentence)
+            sets_supersnippet.append(terms_sent)
+        elif best_match["index"] is not None and best_match["index"] != len(new_supersnippet) - 1:
+            new_supersnippet.append(new_supersnippet.pop(best_match["index"]))
+            sets_supersnippet.append(sets_supersnippet.pop(best_match["index"]))
         if len(new_supersnippet) > max_sentences:
             new_supersnippet.pop(0)
-        new_terms = terms_sent - terms_supersnippet
-        terms_supersnippet.add(new_terms)
+            sets_supersnippet.pop(0)
     return new_supersnippet

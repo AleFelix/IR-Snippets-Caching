@@ -18,3 +18,7 @@ class Timer(object):
     def reset(self):
         self.start_time = None
         self.total_time = 0
+
+    def restart(self):
+        self.reset()
+        self.start()
