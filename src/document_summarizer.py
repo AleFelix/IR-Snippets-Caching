@@ -7,6 +7,10 @@ MAX_DISTANCE = 4
 MIN_SIZE = 3
 
 
+def tokenize_query(text_query):
+    return word_tokenize(text_query)
+
+
 def get_sentences(text_doc):
     all_sentences = []
     for line in text_doc.splitlines():
@@ -120,11 +124,11 @@ def update_supersnippet(supersnippet, snippet, max_sentences, threshold):
     sets_supersnippet = []
     if supersnippet is not None:
         for sentence_ss in supersnippet:
-            terms_sent_ss = set([token for token in word_tokenize(sentence_ss) if len(token) >= MIN_SIZE])
+            terms_sent_ss = set([token.lower() for token in word_tokenize(sentence_ss) if len(token) >= MIN_SIZE])
             sets_supersnippet.append(terms_sent_ss)
     new_supersnippet = [] if supersnippet is None else list(supersnippet)
     for sentence in snippet:
-        terms_sent = set([token for token in word_tokenize(sentence) if len(token) >= MIN_SIZE])
+        terms_sent = set([token.lower() for token in word_tokenize(sentence) if len(token) >= MIN_SIZE])
         best_match = {"index": None, "sim": 0}
         for index, terms_sent_ss in enumerate(sets_supersnippet):
             same_terms = terms_sent & terms_sent_ss
@@ -138,7 +142,17 @@ def update_supersnippet(supersnippet, snippet, max_sentences, threshold):
         elif best_match["index"] is not None and best_match["index"] != len(new_supersnippet) - 1:
             new_supersnippet.append(new_supersnippet.pop(best_match["index"]))
             sets_supersnippet.append(sets_supersnippet.pop(best_match["index"]))
-        if len(new_supersnippet) > max_sentences:
+        if len(new_supersnippet) > int(max_sentences):
             new_supersnippet.pop(0)
             sets_supersnippet.pop(0)
     return new_supersnippet
+
+
+def has_good_quality(snippet, query):
+    terms_query = set(token.lower() for token in query)
+    terms_snippet = set()
+    for sentence in snippet:
+        terms_sent = set([token.lower() for token in word_tokenize(sentence) if len(token) >= MIN_SIZE])
+        terms_snippet.union(terms_sent)
+    same_terms = terms_query & terms_snippet
+    return (len(same_terms) ** 2) / float(len(terms_query)) >= 1

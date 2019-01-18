@@ -28,8 +28,8 @@ def main():
                                            configuration["surrogate_size"], configuration["ssnippet_size"],
                                            configuration["ssnippet_threshold"], configuration["cache_size"])
         snippet_analyzer.start_analysis()
-    #except IOError, exception:
-    #    print "ERROR: " + str(exception)
+    except IOError, exception:
+        print "ERROR: " + str(exception)
     except ConfigParser.NoSectionError:
         print "ERROR: Section [" + CONFIGURATION + "] not found in analyzer.conf"
     except ConfigParser.NoOptionError, exception:
