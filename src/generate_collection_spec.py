@@ -9,7 +9,7 @@ def generate_collection_spec(clueweb_root, num_files, out_path):
     with open(out_path, "w") as file_out:
         for i in xrange(0, num_files):
             first_num = randint(0, 19)
-            second_num = randint(0, 12)
+            second_num = randint(0, 11)
             third_num = randint(0, 99)
             first_folder = MAIN_FOLDER + str(first_num).zfill(2)
             second_folder = str(first_num).zfill(2) + str(second_num).zfill(2) + "wb"
