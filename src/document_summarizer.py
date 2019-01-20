@@ -8,8 +8,8 @@ MAX_DISTANCE = 4
 MIN_SIZE = 3
 
 
-def tokenize_query(text_query):
-    return word_tokenize(text_query)
+def get_terms_text(text, stop_words):
+    return [token.lower() for token in word_tokenize(text) if token not in stop_words and len(token) >= MIN_SIZE]
 
 
 def get_sentences(text_doc):
@@ -23,7 +23,7 @@ def get_sentences(text_doc):
 
 def get_relevant_terms(text_doc, stop_words):
     stop_words = set(stop_words)
-    terms = [token.lower() for token in word_tokenize(text_doc) if token not in stop_words and len(token) >= MIN_SIZE]
+    terms = get_terms_text(text_doc, stop_words)
     terms_dist = Counter(terms)
     terms_limit = int(len(terms) * LIMIT)
     freq_count = 0
@@ -36,8 +36,8 @@ def get_relevant_terms(text_doc, stop_words):
     return relevant_terms
 
 
-def compute_sentence_relevance(sentence, relevant_terms):
-    sentence = [token.lower() for token in word_tokenize(sentence) if len(token) >= MIN_SIZE]
+def compute_sentence_relevance(sentence, relevant_terms, stop_words):
+    sentence = get_terms_text(sentence, stop_words)
     segments_relevance = []
     number_relevants_segment = 0
     number_terms_found = 0
@@ -87,7 +87,7 @@ def compute_sentence_relevance(sentence, relevant_terms):
 def compute_sentence_query_relevance(sentence, query):
     sentence = [token.lower() for token in word_tokenize(sentence) if len(token) >= MIN_SIZE]
     query_count = sum(1 for token in sentence if token in set(query))
-    return (query_count ** 2) / float(len(query))
+    return (query_count ** 2) / float(len(query)) if len(query) > 0 else 0
 
 
 def summarize_document(text_doc, stop_words, max_size=None, query=None, max_sent=None, w_query=None, w_sent=None):
@@ -98,7 +98,7 @@ def summarize_document(text_doc, stop_words, max_size=None, query=None, max_sent
     relevant_terms = get_relevant_terms(text_doc, stop_words)
     all_relevances = []
     for sentence in all_sentences:
-        sent_relevance = compute_sentence_relevance(sentence, relevant_terms)
+        sent_relevance = compute_sentence_relevance(sentence, relevant_terms, stop_words)
         if query is not None:
             sent_query_relevance = compute_sentence_query_relevance(sentence, query)
             sent_relevance = w_query * sent_query_relevance + w_sent * sent_relevance
@@ -117,19 +117,18 @@ def generate_summary(text_doc, stop_words, max_size):
 
 
 def generate_snippet(text_doc, stop_words, max_sentences, query, query_weight=0.6, sent_weight=0.4):
-    query = [token.lower() for token in query]
     return summarize_document(text_doc, stop_words, None, query, max_sentences, query_weight, sent_weight)
 
 
-def update_supersnippet(supersnippet, snippet, max_sentences, threshold):
+def update_supersnippet(supersnippet, snippet, max_sentences, threshold, stop_words):
     sets_supersnippet = []
     if supersnippet is not None:
         for sentence_ss in supersnippet:
-            terms_sent_ss = set(token.lower() for token in word_tokenize(sentence_ss) if len(token) >= MIN_SIZE)
+            terms_sent_ss = set(get_terms_text(sentence_ss, stop_words))
             sets_supersnippet.append(terms_sent_ss)
     new_supersnippet = [] if supersnippet is None else list(supersnippet)
     for sentence in snippet:
-        terms_sent = set(token.lower() for token in word_tokenize(sentence) if len(token) >= MIN_SIZE)
+        terms_sent = set(get_terms_text(sentence, stop_words))
         best_match = {"index": None, "sim": 0}
         for index, terms_sent_ss in enumerate(sets_supersnippet):
             same_terms = terms_sent & terms_sent_ss
@@ -149,11 +148,17 @@ def update_supersnippet(supersnippet, snippet, max_sentences, threshold):
     return new_supersnippet
 
 
-def has_good_quality(snippet, query):
-    terms_query = set(token.lower() for token in query)
+def has_good_quality(snippet, query, stop_words):
+    terms_query = set(query)
     terms_snippet = set()
     for sentence in snippet:
-        terms_sent = set(token.lower() for token in word_tokenize(sentence) if len(token) >= MIN_SIZE)
-        terms_snippet.union(terms_sent)
+        terms_sent = set(get_terms_text(sentence, stop_words))
+        terms_snippet = terms_snippet.union(terms_sent)
     same_terms = terms_query & terms_snippet
-    return (len(same_terms) ** 2) / float(len(terms_query)) >= 1
+    print "SAME TERMS"
+    print same_terms
+    print "TERMS QUERY"
+    print terms_query
+    print "DIVISION"
+    print str((len(same_terms) ** 2) / float(len(terms_query)))
+    return (len(same_terms) ** 2) / float(len(terms_query)) >= 1 if len(terms_query) > 0 else 0

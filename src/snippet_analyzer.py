@@ -3,7 +3,7 @@
 import codecs
 from document_parser import get_document_path, get_html_doc, clean_html
 from document_summarizer import generate_snippet, generate_summary, update_supersnippet, has_good_quality,\
-    tokenize_query
+    get_terms_text
 from cache_manager import DocumentsCache
 from timer import Timer
 
@@ -12,7 +12,7 @@ RESULT_LIST_LENGTH = 10
 
 class SnippetAnalyzer(object):
     def __init__(self, path_results, path_queries, path_stopwords, root_corpus, snippet_size, max_queries,
-                 surrogate_size, ssnippet_size, ssnippet_threshold, cache_memory_size):
+                 surrogate_size, ssnippet_size, ssnippet_threshold, cache_memory_sizes):
         self.path_results = path_results
         self.path_queries = path_queries
         self.path_stopwords = path_stopwords
@@ -30,11 +30,53 @@ class SnippetAnalyzer(object):
         self.filepath_docs = None
         self.num_of_loaded_queries = None
         self.more_queries = None
-        self.cache_docs = DocumentsCache(cache_memory_size)
-        self.cache_surrogates = DocumentsCache(cache_memory_size)
-        self.cache_ssnippets = DocumentsCache(cache_memory_size)
+        self.cache_docs = DocumentsCache(cache_memory_sizes)
+        self.cache_surrogates = DocumentsCache(cache_memory_sizes)
+        self.cache_ssnippets = DocumentsCache(cache_memory_sizes)
         self.timer = Timer()
         self.load_times_docs = {}
+        self.doc_types = ["docs", "surrogates", "ssnippets"]
+        self.cache_memory_sizes = sorted(cache_memory_sizes, reverse=True)
+        self.statistics = self.create_object_statistics()
+
+    def create_object_statistics(self):
+        statistics = {}
+        for doc_type in self.doc_types:
+            statistics[doc_type] = {
+                "times": {size: 0 for size in self.cache_memory_sizes},
+                "hits": {size: 0 for size in self.cache_memory_sizes}
+            }
+        statistics["ssnippets"]["quality_misses"] = {size: 0 for size in self.cache_memory_sizes}
+        statistics["ssnippets"]["quality_hits"] = {size: 0 for size in self.cache_memory_sizes}
+        statistics["total_requests"] = 0
+        return statistics
+
+    def update_cache_times(self, doc_type, cache_type, time, check_hits):
+        self.statistics[doc_type]["times"][cache_type.max_memory_size] += time
+        hits_caches = cache_type.check_hits_extra_caches()
+        for size in hits_caches:
+            if not check_hits or (check_hits and not hits_caches[size]):
+                self.statistics[doc_type]["times"][size] += time
+
+    def update_cache_hits(self, doc_type, cache_type):
+        self.statistics[doc_type]["hits"][cache_type.max_memory_size] += 1
+        hits_caches = cache_type.check_hits_extra_caches()
+        for size in hits_caches:
+            if hits_caches[size]:
+                self.statistics[doc_type]["hits"][size] += 1
+
+    def update_ssnippet_quality_hits(self, has_quality):
+        if has_quality:
+            self.statistics["ssnippets"]["quality_hits"][self.cache_ssnippets.max_memory_size] += 1
+        else:
+            self.statistics["ssnippets"]["quality_misses"][self.cache_ssnippets.max_memory_size] += 1
+        hits_caches = self.cache_ssnippets.check_hits_extra_caches()
+        for size in hits_caches:
+            if hits_caches[size]:
+                if has_quality:
+                    self.statistics["ssnippets"]["quality_hits"][size] += 1
+                else:
+                    self.statistics["ssnippets"]["quality_misses"][size] += 1
 
     def load_stopwords(self):
         self.stopwords = []
@@ -49,7 +91,7 @@ class SnippetAnalyzer(object):
             self.more_queries = False
             for index, line in enumerate(file_queries):
                 if index > self.last_query_line:
-                    query = tokenize_query(line.strip())
+                    query = get_terms_text(line.strip(), self.stopwords)
                     self.id_queries[index + 1] = query
                     self.last_query_line += 1
                     self.num_of_loaded_queries += 1
@@ -80,6 +122,7 @@ class SnippetAnalyzer(object):
                     break
 
     def load_doc(self, id_doc):
+        self.statistics["total_requests"] += 1
         text_doc = self.cache_docs.get_document(id_doc)
         if text_doc is None:
             path_doc = self.filepath_docs[id_doc]
@@ -88,8 +131,11 @@ class SnippetAnalyzer(object):
             text_doc = clean_html(text_doc)
             self.timer.stop()
             self.load_times_docs[id_doc] = self.timer.total_time
+            self.update_cache_times("docs", self.cache_docs, self.load_times_docs[id_doc], True)
             print "CARGA DOC: " + str(self.timer.total_time)
             self.cache_docs.add_document(id_doc, text_doc)
+        else:
+            self.update_cache_hits("docs", self.cache_docs)
 
     def start_analysis(self):
         self.load_stopwords()
@@ -116,17 +162,22 @@ class SnippetAnalyzer(object):
         self.timer.restart()
         generate_snippet(text_doc, self.stopwords, self.snippet_size, query)
         self.timer.stop()
+        self.update_cache_times("docs", self.cache_docs, self.timer.total_time, False)
         print "GENERACIÓN SNIPPET: " + str(self.timer.total_time)
 
     def analyze_surrogate(self, query, id_doc):
         surrogate = self.cache_surrogates.get_document(id_doc)
         if surrogate is None:
+            self.update_cache_times("surrogates", self.cache_surrogates, self.load_times_docs[id_doc], True)
             text_doc = self.cache_docs.get_document(id_doc)
             surrogate = generate_summary(text_doc, self.stopwords, self.surrogate_size)
             self.cache_surrogates.add_document(id_doc, surrogate)
+        else:
+            self.update_cache_hits("surrogates", self.cache_surrogates)
         self.timer.restart()
         generate_snippet(surrogate, self.stopwords, self.snippet_size, query)
         self.timer.stop()
+        self.update_cache_times("surrogates", self.cache_surrogates, self.timer.total_time, False)
         print "GENERACIÓN SNIPPET S: " + str(self.timer.total_time)
 
     def analyze_supersnippet(self, query, id_doc):
@@ -134,19 +185,36 @@ class SnippetAnalyzer(object):
         ssnippet = self.cache_ssnippets.get_document(id_doc)
         if ssnippet is None:
             found = False
+            self.update_cache_times("ssnippets", self.cache_ssnippets, self.load_times_docs[id_doc], True)
             text_doc = self.cache_docs.get_document(id_doc)
+            self.timer.restart()
             snippet = generate_snippet(text_doc, self.stopwords, self.snippet_size, query)
-            ssnippet = update_supersnippet(ssnippet, snippet, self.ssnippet_size, self.ssnippet_threshold)
+            ssnippet = update_supersnippet(ssnippet, snippet, self.ssnippet_size, self.ssnippet_threshold,
+                                           self.stopwords)
+            self.timer.stop()
+            self.update_cache_times("ssnippets", self.cache_ssnippets, self.timer.total_time, False)
             self.cache_ssnippets.add_document(id_doc, ssnippet)
+        else:
+            self.update_cache_hits("ssnippets", self.cache_ssnippets)
         self.timer.restart()
         snippet = generate_snippet(ssnippet, self.stopwords, self.snippet_size, query)
         self.timer.stop()
+        self.update_cache_times("ssnippets", self.cache_ssnippets, self.timer.total_time, False)
         print "GENERACIÓN SNIPPET SS: " + str(self.timer.total_time)
-        if not has_good_quality(snippet, query) and found:
+        if not has_good_quality(snippet, query, self.stopwords) and found:
+            print query
+            print "-----------------------------"
+            print ssnippet
+            self.update_cache_times("ssnippets", self.cache_ssnippets, self.load_times_docs[id_doc], False)
+            self.update_ssnippet_quality_hits(False)
             text_doc = self.cache_docs.get_document(id_doc)
-            snippet = generate_snippet(text_doc, self.stopwords, self.snippet_size, query)
             self.timer.restart()
-            ssnippet = update_supersnippet(ssnippet, snippet, self.ssnippet_size, self.ssnippet_threshold)
+            snippet = generate_snippet(text_doc, self.stopwords, self.snippet_size, query)
+            ssnippet = update_supersnippet(ssnippet, snippet, self.ssnippet_size, self.ssnippet_threshold,
+                                           self.stopwords)
             self.timer.stop()
+            self.update_cache_times("ssnippets", self.cache_ssnippets, self.timer.total_time, False)
             print "GENERACIÓN SNIPPET SS Q: " + str(self.timer.total_time)
             self.cache_ssnippets.add_document(id_doc, ssnippet)
+        elif found:
+            self.update_ssnippet_quality_hits(True)

@@ -17,17 +17,19 @@ def get_config_options(config_parser, options):
 
 def main():
     options = ["path_results", "path_queries", "path_stopwords", "root_corpus", "snippet_size", "max_queries",
-               "surrogate_size", "ssnippet_size", "ssnippet_threshold", "cache_memory_size"]
+               "surrogate_size", "ssnippet_size", "ssnippet_threshold", "cache_memory_sizes"]
     config_parser = ConfigParser.ConfigParser()
     try:
         config_parser.readfp(open(FILE_PATH + "/analyzer.conf"))
         configuration = get_config_options(config_parser, options)
+        cache_memory_sizes = [int(size) for size in configuration["cache_memory_sizes"].split(",")]
         snippet_analyzer = SnippetAnalyzer(configuration["path_results"], configuration["path_queries"],
                                            configuration["path_stopwords"], configuration["root_corpus"],
                                            configuration["snippet_size"], configuration["max_queries"],
                                            configuration["surrogate_size"], configuration["ssnippet_size"],
-                                           configuration["ssnippet_threshold"], configuration["cache_memory_size"])
+                                           configuration["ssnippet_threshold"], cache_memory_sizes)
         snippet_analyzer.start_analysis()
+        print snippet_analyzer.statistics
     except IOError, exception:
         print "ERROR: " + str(exception)
     except ConfigParser.NoSectionError:
