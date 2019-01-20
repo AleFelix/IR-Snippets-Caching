@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from nltk import word_tokenize, sent_tokenize, FreqDist
+from nltk import word_tokenize, sent_tokenize
+from collections import Counter
 
 LIMIT = 0.3
 MAX_DISTANCE = 4
@@ -12,6 +13,7 @@ def tokenize_query(text_query):
 
 
 def get_sentences(text_doc):
+    # text_doc = text_doc.replace("\n", " ")
     all_sentences = []
     for line in text_doc.splitlines():
         sentences = sent_tokenize(line)
@@ -20,11 +22,10 @@ def get_sentences(text_doc):
 
 
 def get_relevant_terms(text_doc, stop_words):
-    tokens = [token.lower() for token in word_tokenize(text_doc)]
     stop_words = set(stop_words)
-    terms = [token for token in tokens if token not in stop_words and len(token) >= MIN_SIZE]
-    terms_dist = FreqDist(terms)
-    terms_limit = int(terms_dist.N() * LIMIT)
+    terms = [token.lower() for token in word_tokenize(text_doc) if token not in stop_words and len(token) >= MIN_SIZE]
+    terms_dist = Counter(terms)
+    terms_limit = int(len(terms) * LIMIT)
     freq_count = 0
     relevant_terms = set()
     for term, freq in terms_dist.most_common():
@@ -124,11 +125,11 @@ def update_supersnippet(supersnippet, snippet, max_sentences, threshold):
     sets_supersnippet = []
     if supersnippet is not None:
         for sentence_ss in supersnippet:
-            terms_sent_ss = set([token.lower() for token in word_tokenize(sentence_ss) if len(token) >= MIN_SIZE])
+            terms_sent_ss = set(token.lower() for token in word_tokenize(sentence_ss) if len(token) >= MIN_SIZE)
             sets_supersnippet.append(terms_sent_ss)
     new_supersnippet = [] if supersnippet is None else list(supersnippet)
     for sentence in snippet:
-        terms_sent = set([token.lower() for token in word_tokenize(sentence) if len(token) >= MIN_SIZE])
+        terms_sent = set(token.lower() for token in word_tokenize(sentence) if len(token) >= MIN_SIZE)
         best_match = {"index": None, "sim": 0}
         for index, terms_sent_ss in enumerate(sets_supersnippet):
             same_terms = terms_sent & terms_sent_ss
@@ -152,7 +153,7 @@ def has_good_quality(snippet, query):
     terms_query = set(token.lower() for token in query)
     terms_snippet = set()
     for sentence in snippet:
-        terms_sent = set([token.lower() for token in word_tokenize(sentence) if len(token) >= MIN_SIZE])
+        terms_sent = set(token.lower() for token in word_tokenize(sentence) if len(token) >= MIN_SIZE)
         terms_snippet.union(terms_sent)
     same_terms = terms_query & terms_snippet
     return (len(same_terms) ** 2) / float(len(terms_query)) >= 1
