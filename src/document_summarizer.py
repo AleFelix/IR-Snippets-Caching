@@ -148,13 +148,16 @@ def update_supersnippet(supersnippet, snippet, max_sentences, threshold, stop_wo
     return new_supersnippet
 
 
-def has_good_quality(snippet, query, stop_words):
+def has_good_quality(text, query, stop_words):
     terms_query = set(query)
-    terms_snippet = set()
-    for sentence in snippet:
-        terms_sent = set(get_terms_text(sentence, stop_words))
-        terms_snippet = terms_snippet.union(terms_sent)
-    same_terms = terms_query & terms_snippet
+    terms_text = set()
+    if type(text) is list:
+        for sentence in text:
+            terms_sent = set(get_terms_text(sentence, stop_words))
+            terms_text = terms_text.union(terms_sent)
+    else:
+        terms_text = set(get_terms_text(text, stop_words))
+    same_terms = terms_query & terms_text
     print "SAME TERMS"
     print same_terms
     print "TERMS QUERY"
