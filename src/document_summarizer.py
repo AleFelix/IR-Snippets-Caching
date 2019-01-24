@@ -158,10 +158,10 @@ def has_good_quality(text, query, stop_words):
     else:
         terms_text = set(get_terms_text(text, stop_words))
     same_terms = terms_query & terms_text
-    print "SAME TERMS"
-    print same_terms
-    print "TERMS QUERY"
-    print terms_query
-    print "DIVISION"
-    print str((len(same_terms) ** 2) / float(len(terms_query)))
+    # print "SAME TERMS"
+    # print same_terms
+    # print "TERMS QUERY"
+    # print terms_query
+    # print "DIVISION"
+    # print str((len(same_terms) ** 2) / float(len(terms_query)))
     return (len(same_terms) ** 2) / float(len(terms_query)) >= 1 if len(terms_query) > 0 else 0

@@ -64,6 +64,7 @@ class SnippetAnalyzer(object):
         self.pending_ssnippets_analysis = []
         self.waiting_surrogate = False
         self.waiting_ssnippet = False
+        self.mpi_buffer = bytearray(1 << 28)
 
     def create_output_dir(self):
         try:
@@ -224,19 +225,28 @@ class SnippetAnalyzer(object):
         current_pos_doc = 0
         finished_queries = False
         while not finished_queries:
-            if current_pos_doc >= RESULT_LIST_LENGTH:
+            print "POS_QUERY: " + str(current_pos_query)
+            print "POS_DOC: " + str(current_pos_doc)
+            if not finished_queries \
+                    and current_pos_doc >= len(self.results_per_id_query[list_ids_queries[current_pos_query]]):
                 current_pos_doc = 0
                 current_pos_query += 1
-            if current_pos_query >= len(list_ids_queries):
-                finished_queries = True
-            else:
+                if current_pos_query >= len(list_ids_queries):
+                    finished_queries = True
+            while not finished_queries and not list_ids_queries[current_pos_query] in self.results_per_id_query:
+                current_pos_query += 1
+                if current_pos_query >= len(list_ids_queries):
+                    finished_queries = True
+            if not finished_queries:
                 id_query = list_ids_queries[current_pos_query]
                 id_doc = self.results_per_id_query[id_query][current_pos_doc]
+                current_pos_doc += 1
                 loaded = self.process_doc(id_doc, id_query)
                 if not loaded:
                     self.send_job(TASKS["LOAD"], id_doc)
                 else:
-                    self.send_job(TASKS["DOC"], id_doc, id_query, True)
+                    self.send_job(TASKS["DOC"], id_doc, self.id_queries[id_query], True)
+                # if len(self.waiting_ids_docs) > 10:
                 self.check_pending_analysis()
 
     def send_job(self, task, id_doc, query=None, was_hit=None, ss_size=None):
@@ -260,18 +270,22 @@ class SnippetAnalyzer(object):
                         self.start_analyze_supersnippet(query, id_doc, ss_size, id_proc)
                         was_send = True
                         break
-            self.listen_answers()
+            if not was_send:
+                self.listen_answers()
 
     def listen_answers(self):
         for id_proc in self.processes_tasks:
             if self.processes_tasks[id_proc] is not None:
-                ready, message = self.processes_tasks[id_proc].test()
-                if ready and message is not None:
+                # ready, message = self.processes_tasks[id_proc].test()
+                # if ready and message is not None:
+                message = self.processes_tasks[id_proc].wait()
+                if message:
                     if message.task == TASKS["LOAD"]:
                         id_doc, text_doc, load_time = message.result
                         if id_doc == self.waiting_ids_docs[0]:
                             self.finish_load_doc(id_doc, text_doc, load_time)
                             self.processes_tasks[id_proc] = None
+                            print "CLOSED TASK LOAD FROM " + str(id_proc)
                             self.waiting_ids_docs.pop(0)
                         else:
                             self.pending_messages.append(message)
@@ -279,16 +293,20 @@ class SnippetAnalyzer(object):
                         doc_has_quality, total_time, was_hit = message.result
                         self.finish_analyze_document(doc_has_quality, total_time, was_hit)
                         self.processes_tasks[id_proc] = None
+                        print "CLOSED TASK DOC FROM " + str(id_proc)
                     if message.task == TASKS["SURR"]:
                         total_time, has_quality, was_hit, id_doc, surrogate = message.result
                         self.finish_analyze_surrogate(total_time, has_quality, was_hit, id_doc, surrogate)
                         self.processes_tasks[id_proc] = None
+                        print "CLOSED TASK SURR FROM " + str(id_proc)
                     if message.task == TASKS["SSNIPP"]:
                         total_time, has_quality, id_doc, ss_size, was_hit, ssnippet = message.result
                         self.finish_analyze_supersnippet(total_time, has_quality, id_doc, ss_size, was_hit, ssnippet)
                         self.processes_tasks[id_proc] = None
-                    self.check_pending_messages()
-                    self.check_pending_analysis()
+                        print "CLOSED TASK SSNIPP FROM " + str(id_proc)
+        self.check_pending_messages()
+        # if len(self.waiting_ids_docs) > 10:
+        self.check_pending_analysis()
 
     def check_pending_messages(self):
         check_again = True
@@ -297,7 +315,7 @@ class SnippetAnalyzer(object):
             for message in self.pending_messages:
                 if message.task == TASKS["LOAD"]:
                     id_doc, text_doc, load_time = message.result
-                    if id_doc == self.waiting_ids_docs[0]:
+                    if self.waiting_ids_docs and id_doc == self.waiting_ids_docs[0]:
                         self.finish_load_doc(id_doc, text_doc, load_time)
                         self.waiting_ids_docs.pop(0)
                         check_again = True
@@ -313,16 +331,18 @@ class SnippetAnalyzer(object):
                 and not self.waiting_surrogate:
             id_doc = self.pending_surrogates_analysis[0]["id_doc"]
             id_query = self.pending_surrogates_analysis[0]["id_query"]
-            self.send_job(TASKS["SURR"], id_doc, id_query, True)
-            self.waiting_surrogate = True
+            print "SENDING SURROGATE JOB"
             self.pending_surrogates_analysis.pop(0)
+            self.waiting_surrogate = True
+            self.send_job(TASKS["SURR"], id_doc, self.id_queries[id_query], True)
         while self.pending_ssnippets_analysis and self.pending_ssnippets_analysis[0]["ready"] \
                 and not self.waiting_ssnippet:
             id_doc = self.pending_ssnippets_analysis[0]["id_doc"]
             id_query = self.pending_ssnippets_analysis[0]["id_query"]
-            self.send_job(TASKS["SSNIPP"], id_doc, id_query, True)
-            self.waiting_ssnippet = True
+            print "SENDING SSNIPPET JOB"
             self.pending_ssnippets_analysis.pop(0)
+            self.waiting_ssnippet = True
+            self.send_job(TASKS["SSNIPP"], id_doc, self.id_queries[id_query], True, 5)
 
     def process_doc(self, id_doc, id_query):
         loaded = False
@@ -336,21 +356,31 @@ class SnippetAnalyzer(object):
         return loaded
 
     def start_load_doc(self, id_doc, id_proc):
+        print "SENDIND START_LOAD TO " + str(id_proc)
         path_doc = self.filepath_docs[id_doc]
-        mpi_comm.isend(Message(worker_load_doc, [id_doc, path_doc], TASKS["LOAD"]), dest=id_proc)
-        self.processes_tasks[id_proc] = mpi_comm.irecv(source=id_proc)
+        mpi_comm.send(Message(worker_load_doc, [id_doc, path_doc], TASKS["LOAD"]), dest=id_proc, tag=id_proc)
+        self.processes_tasks[id_proc] = mpi_comm.irecv(self.mpi_buffer, source=id_proc, tag=id_proc)
         self.waiting_ids_docs.append(id_doc)
 
     def finish_load_doc(self, id_doc, text_doc, load_time):
         self.load_times_docs[id_doc] = load_time
         self.update_cache_times("docs", self.cache_docs, self.load_times_docs[id_doc], True)
         self.cache_docs.add_document(id_doc, text_doc)
+        for surrogate_status in self.pending_surrogates_analysis:
+            if surrogate_status["id_doc"] == id_doc:
+                surrogate_status["ready"] = True
+                break
+        for ssnippet_status in self.pending_ssnippets_analysis:
+            if ssnippet_status["id_doc"] == id_doc:
+                ssnippet_status["ready"] = True
+                break
 
     def start_analyze_document(self, id_doc, query, was_hit, id_proc):
+        print "SENDIND START_ANALYZE_DOC TO " + str(id_proc)
         text_doc = self.cache_docs.get_document(id_doc)
-        mpi_comm.isend(Message(worker_analyze_document, [text_doc, query, self.stopwords, self.snippet_size, was_hit],
-                               TASKS["DOC"]), dest=id_proc)
-        self.processes_tasks[id_proc] = mpi_comm.irecv(source=id_proc)
+        mpi_comm.send(Message(worker_analyze_document, [text_doc, query, self.stopwords, self.snippet_size, was_hit],
+                              TASKS["DOC"]), dest=id_proc, tag=id_proc)
+        self.processes_tasks[id_proc] = mpi_comm.irecv(self.mpi_buffer, source=id_proc, tag=id_proc)
 
     def finish_analyze_document(self, total_time, doc_has_quality, was_hit):
         if was_hit:
@@ -358,14 +388,15 @@ class SnippetAnalyzer(object):
         self.update_cache_times("docs", self.cache_docs, total_time, False)
 
     def start_analyze_surrogate(self, query, id_doc, id_proc):
+        print "SENDIND START_ANALYZE_SURR TO " + str(id_proc)
         surrogate = self.cache_surrogates.get_document(id_doc)
         text_doc = None
         if surrogate is None:
             text_doc = self.cache_docs.get_document(id_doc)
-        mpi_comm.isend(Message(worker_analyze_surrogate,
-                               [surrogate, id_doc, text_doc, query, self.stopwords, self.snippet_size,
-                                self.surrogate_size], TASKS["SURR"]), dest=id_proc)
-        self.processes_tasks[id_proc] = mpi_comm.irecv(source=id_proc)
+        mpi_comm.send(Message(worker_analyze_surrogate,
+                              [surrogate, id_doc, text_doc, query, self.stopwords, self.snippet_size,
+                               self.surrogate_size], TASKS["SURR"]), dest=id_proc, tag=id_proc)
+        self.processes_tasks[id_proc] = mpi_comm.irecv(self.mpi_buffer, source=id_proc, tag=id_proc)
 
     def finish_analyze_surrogate(self, total_time, has_quality, was_hit, id_doc, surrogate):
         if was_hit:
@@ -379,14 +410,13 @@ class SnippetAnalyzer(object):
         self.waiting_surrogate = False
 
     def start_analyze_supersnippet(self, query, id_doc, ss_size, id_proc):
+        print "SENDIND START_ANALYZE_SS TO " + str(id_proc)
         ssnippet = self.cache_ssnippets[ss_size].get_document(id_doc)
-        text_doc = None
-        if ssnippet is None:
-            text_doc = self.cache_docs.get_document(id_doc)
-        mpi_comm.isend(Message(worker_analyze_supersnippet,
-                               [ssnippet, id_doc, text_doc, query, self.stopwords, self.snippet_size, ss_size,
-                                self.ssnippet_threshold], TASKS["SSNIPP"]), dest=id_proc)
-        self.processes_tasks[id_proc] = mpi_comm.irecv(source=id_proc)
+        text_doc = self.cache_docs.get_document(id_doc)
+        mpi_comm.send(Message(worker_analyze_supersnippet,
+                              [ssnippet, id_doc, text_doc, query, self.stopwords, self.snippet_size, ss_size,
+                               self.ssnippet_threshold], TASKS["SSNIPP"]), dest=id_proc, tag=id_proc)
+        self.processes_tasks[id_proc] = mpi_comm.irecv(self.mpi_buffer, source=id_proc, tag=id_proc)
 
     def finish_analyze_supersnippet(self, total_time, has_quality, id_doc, ss_size, was_hit, ssnippet):
         if was_hit:
@@ -467,29 +497,38 @@ def master_main():
     options = ["path_results", "path_queries", "path_stopwords", "root_corpus", "snippet_size", "max_queries",
                "surrogate_size", "ssnippet_sizes", "ssnippet_threshold", "cache_memory_sizes", "dir_output"]
     config_parser = ConfigParser.ConfigParser()
-    try:
-        config_parser.readfp(open(FILE_PATH + "/analyzer.conf"))
-        configuration = get_config_options(config_parser, options)
-        cache_memory_sizes = [int(size) for size in configuration["cache_memory_sizes"].split(",")]
-        ssnippet_sizes = [int(size) for size in configuration["ssnippet_sizes"].split(",")]
-        snippet_analyzer = SnippetAnalyzer(configuration["path_results"], configuration["path_queries"],
-                                           configuration["path_stopwords"], configuration["root_corpus"],
-                                           configuration["snippet_size"], configuration["max_queries"],
-                                           configuration["surrogate_size"], ssnippet_sizes,
-                                           configuration["ssnippet_threshold"], cache_memory_sizes,
-                                           configuration["dir_output"])
-        snippet_analyzer.start_analysis()
-        print snippet_analyzer.statistics
-    except IOError, exception:
-        print "ERROR: " + str(exception)
-    except ConfigParser.NoSectionError:
-        print "ERROR: Section [" + CONFIGURATION + "] not found in analyzer.conf"
-    except ConfigParser.NoOptionError, exception:
-        print "ERROR: " + exception.message
+    # try:
+    config_parser.readfp(open(FILE_PATH + "/analyzer.conf"))
+    configuration = get_config_options(config_parser, options)
+    cache_memory_sizes = [int(size) for size in configuration["cache_memory_sizes"].split(",")]
+    ssnippet_sizes = [int(size) for size in configuration["ssnippet_sizes"].split(",")]
+    snippet_analyzer = SnippetAnalyzer(configuration["path_results"], configuration["path_queries"],
+                                       configuration["path_stopwords"], configuration["root_corpus"],
+                                       configuration["snippet_size"], configuration["max_queries"],
+                                       configuration["surrogate_size"], ssnippet_sizes,
+                                       configuration["ssnippet_threshold"], cache_memory_sizes,
+                                       configuration["dir_output"])
+    snippet_analyzer.start_analysis()
+    print snippet_analyzer.statistics
+    # except IOError, exception:
+    #    print "ERROR: " + str(exception)
+    # except ConfigParser.NoSectionError:
+    #   print "ERROR: Section [" + CONFIGURATION + "] not found in analyzer.conf"
+    # except ConfigParser.NoOptionError, exception:
+    #    print "ERROR: " + exception.message
 
 
 def worker_main():
-    pass
+    while True:
+        message_recv = mpi_comm.recv(source=0, tag=proc_rank)
+        # message_recv = request.wait()
+        print "YO, WORKER " + str(proc_rank) + " RECIBI LA TAREA " + str(message_recv.task)
+        message_recv.execute_function()
+        message_send = Message(None, None, message_recv.task, message_recv.result)
+        print "RESULT: " + str(message_recv.result)
+        req = mpi_comm.isend(message_send, dest=0, tag=proc_rank)
+        req.wait()
+        print "YO, WORKER " + str(proc_rank) + " ENVIE UNA REPUESTA"
 
 
 if __name__ == '__main__':
