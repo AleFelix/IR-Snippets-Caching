@@ -5,7 +5,8 @@ import warc
 # import gzip
 # import subprocess
 # from warcio.archiveiterator import ArchiveIterator
-from bs4 import BeautifulSoup
+# from bs4 import BeautifulSoup
+import bs4
 # from timer import Timer
 
 
@@ -50,7 +51,7 @@ def get_html_doc(id_doc, path_doc):
 
 
 def clean_html(html_doc):
-    soup = BeautifulSoup(html_doc, "html.parser")
+    soup = bs4.BeautifulSoup(html_doc, "html.parser")
     for script in soup(["script", "style"]):
         script.extract()
     text_doc = soup.get_text(separator=u" ")

@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 
-from nltk import word_tokenize, sent_tokenize
-from collections import Counter
+# from nltk import word_tokenize, sent_tokenize
+# from collections import Counter
+import nltk
+import collections
 
 LIMIT = 0.3
 MAX_DISTANCE = 4
@@ -9,14 +11,14 @@ MIN_SIZE = 3
 
 
 def get_terms_text(text, stop_words):
-    return [token.lower() for token in word_tokenize(text) if token not in stop_words and len(token) >= MIN_SIZE]
+    return [token.lower() for token in nltk.word_tokenize(text) if token not in stop_words and len(token) >= 3]
 
 
 def get_sentences(text_doc):
     # text_doc = text_doc.replace("\n", " ")
     all_sentences = []
     for line in text_doc.splitlines():
-        sentences = sent_tokenize(line)
+        sentences = nltk.sent_tokenize(line)
         all_sentences.extend(sentences)
     return all_sentences
 
@@ -24,8 +26,8 @@ def get_sentences(text_doc):
 def get_relevant_terms(text_doc, stop_words):
     stop_words = set(stop_words)
     terms = get_terms_text(text_doc, stop_words)
-    terms_dist = Counter(terms)
-    terms_limit = int(len(terms) * LIMIT)
+    terms_dist = collections.Counter(terms)
+    terms_limit = int(len(terms) * 0.3)
     freq_count = 0
     relevant_terms = set()
     for term, freq in terms_dist.most_common():
@@ -54,7 +56,7 @@ def compute_sentence_relevance(sentence, relevant_terms, stop_words):
                 number_terms_found += 1
                 number_terms_segment = number_terms_found
         else:
-            if position - end_position <= MAX_DISTANCE:
+            if position - end_position <= 4:
                 if term in relevant_terms:
                     end_position = position
                     number_relevants_segment += 1
@@ -85,7 +87,7 @@ def compute_sentence_relevance(sentence, relevant_terms, stop_words):
 
 
 def compute_sentence_query_relevance(sentence, query):
-    sentence = [token.lower() for token in word_tokenize(sentence) if len(token) >= MIN_SIZE]
+    sentence = [token.lower() for token in nltk.word_tokenize(sentence) if len(token) >= 3]
     query_count = sum(1 for token in sentence if token in set(query))
     return (query_count ** 2) / float(len(query)) if len(query) > 0 else 0
 
