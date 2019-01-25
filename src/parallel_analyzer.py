@@ -8,8 +8,6 @@ from document_summarizer import generate_snippet, generate_summary, update_super
     get_terms_text
 import document_summarizer
 from cache_manager import DocumentsCache
-# from message import Message
-# from timer import Timer
 import timer
 import ConfigParser
 import pp
@@ -53,16 +51,14 @@ class SnippetAnalyzer(object):
         self.dir_output = dir_output
         self.start_datetime = datetime.now()
 
-        self.waiting_ids_docs = []
-        self.pending_messages = []
-        self.pending_surrogates_analysis = []
         self.pending_ssnippets_analysis = []
-        self.waiting_surrogate = False
         self.waiting_ssnippet = False
-        self.mpi_buffer = bytearray(1 << 28)
+        # self.mpi_buffer = bytearray(1 << 28)
         self.job_server = pp.Server(64)
-        self.num_cpus = self.job_server.get_ncpus()
+        # self.num_cpus = self.job_server.get_ncpus()
+        self.num_cpus = 64
         self.processes_tasks = []
+        self.loaded_surrogates = set()
 
         self.pp_load_doc = pp.Template(self.job_server, worker_load_doc,
                                        (get_document_path, get_html_doc, clean_html),
@@ -240,8 +236,7 @@ class SnippetAnalyzer(object):
             self.load_queries()
             self.load_result_lists()
             self.analyze_queries()
-        while len(self.pending_messages) > 0 and len(self.pending_surrogates_analysis) > 0\
-                and len(self.pending_ssnippets_analysis) > 0:
+        while len(self.pending_ssnippets_analysis) > 0:
             self.listen_answers()
         self.statistics["total_time"] = (datetime.now() - self.start_datetime).total_seconds()
         self.write_output_statistics()
@@ -276,8 +271,6 @@ class SnippetAnalyzer(object):
                 self.check_pending_analysis()
 
     def send_job(self, task, id_doc, query=None, was_hit=None, ss_size=None):
-        while len(self.processes_tasks) >= self.num_cpus:
-            self.listen_answers()
         id_task = len(self.processes_tasks)
         if task == TASKS["LOAD"]:
             self.start_load_doc(id_doc, query, id_task)
@@ -287,6 +280,8 @@ class SnippetAnalyzer(object):
             self.start_analyze_surrogate(query, id_doc, id_task)
         if task == TASKS["SSNIPP"]:
             self.start_analyze_supersnippet(query, id_doc, ss_size, id_task)
+        while len(self.processes_tasks) >= self.num_cpus:
+            self.listen_answers()
 
     def listen_answers(self):
         for id_task, task in enumerate(self.processes_tasks):
@@ -296,14 +291,9 @@ class SnippetAnalyzer(object):
                 job_type = task["type"]
                 if job_type == TASKS["LOAD"]:
                     id_doc, text_doc, query, load_time = job_result
-                    if len(self.waiting_ids_docs) == 0 or id_doc == self.waiting_ids_docs[0]:
-                        self.finish_load_doc(id_doc, text_doc, query, load_time)
-                        print "CLOSED TASK LOAD FROM " + str(id_task)
-                        if len(self.waiting_ids_docs) > 0:
-                            self.waiting_ids_docs.pop(0)
-                        self.processes_tasks.pop(id_task)
-                    else:
-                        self.pending_messages.append({"result": job_result, "type": job_type})
+                    self.finish_load_doc(id_doc, text_doc, query, load_time)
+                    print "CLOSED TASK LOAD FROM " + str(id_task)
+                    self.processes_tasks.pop(id_task)
                 if job_type == TASKS["DOC"]:
                     doc_has_quality, total_time, was_hit, id_doc = job_result
                     self.finish_analyze_document(doc_has_quality, total_time, was_hit, id_doc)
@@ -319,35 +309,9 @@ class SnippetAnalyzer(object):
                     self.finish_analyze_supersnippet(total_time, has_quality, id_doc, ss_size, was_hit, ssnippet)
                     print "CLOSED TASK SSNIPP FROM " + str(id_task)
                     self.processes_tasks.pop(id_task)
-        self.check_pending_messages()
         self.check_pending_analysis()
 
-    def check_pending_messages(self):
-        check_again = True
-        while check_again:
-            check_again = False
-            for message in self.pending_messages:
-                if message["type"] == TASKS["LOAD"]:
-                    id_doc, text_doc, query, load_time = message["result"]
-                    if self.waiting_ids_docs and id_doc == self.waiting_ids_docs[0]:
-                        self.finish_load_doc(id_doc, text_doc, query, load_time)
-                        self.waiting_ids_docs.pop(0)
-                        check_again = True
-                if message["type"] == TASKS["DOC"]:
-                    pass
-                if message["type"] == TASKS["SURR"]:
-                    pass
-                if message["type"] == TASKS["SSNIPP"]:
-                    pass
-
     def check_pending_analysis(self):
-        while self.pending_surrogates_analysis and self.pending_surrogates_analysis[0]["ready"] \
-                and not self.waiting_surrogate:
-            id_doc = self.pending_surrogates_analysis[0]["id_doc"]
-            id_query = self.pending_surrogates_analysis[0]["id_query"]
-            print "SENDING SURROGATE JOB"
-            self.pending_surrogates_analysis.pop(0)
-            self.send_job(TASKS["SURR"], id_doc, self.id_queries[id_query], True)
         while self.pending_ssnippets_analysis and self.pending_ssnippets_analysis[0]["ready"] \
                 and not self.waiting_ssnippet:
             id_doc = self.pending_ssnippets_analysis[0]["id_doc"]
@@ -362,7 +326,6 @@ class SnippetAnalyzer(object):
         text_doc = self.cache_docs.get_document(id_doc)
         if text_doc is not None:
             loaded = True
-        self.pending_surrogates_analysis.append({"ready": loaded, "id_doc": id_doc, "id_query": id_query})
         self.pending_ssnippets_analysis.append({"ready": loaded, "id_doc": id_doc, "id_query": id_query})
         return loaded
 
@@ -371,18 +334,15 @@ class SnippetAnalyzer(object):
         path_doc = self.filepath_docs[id_doc]
         job = self.pp_load_doc.submit(id_doc, path_doc, query)
         self.processes_tasks.append({"job": job, "type": TASKS["LOAD"]})
-        self.waiting_ids_docs.append(id_doc)
 
     def finish_load_doc(self, id_doc, text_doc, query, load_time):
         self.load_times_docs[id_doc] = load_time
         was_hit = self.cache_docs.get_document(id_doc) is not None
         if not was_hit:
             self.cache_docs.add_document(id_doc, text_doc)
-        self.send_job(TASKS["DOC"], id_doc, query, was_hit)
-        for surrogate_status in self.pending_surrogates_analysis:
-            if surrogate_status["id_doc"] == id_doc:
-                surrogate_status["ready"] = True
-                break
+        id_task = len(self.processes_tasks)
+        self.start_analyze_document(id_doc, query, was_hit, id_task)
+        self.start_analyze_surrogate(query, id_doc, id_task+1)
         for ssnippet_status in self.pending_ssnippets_analysis:
             if ssnippet_status["id_doc"] == id_doc:
                 ssnippet_status["ready"] = True
@@ -397,21 +357,27 @@ class SnippetAnalyzer(object):
     def finish_analyze_document(self, total_time, doc_has_quality, was_hit, id_doc):
         if was_hit:
             self.update_cache_hits("docs", self.cache_docs)
+            print "CACHE HIT DOC: TOTAL: " + str(self.statistics["docs"]["hits"])
             self.update_quality_hits("docs", self.cache_docs, doc_has_quality, None)
         else:
             self.update_cache_times("docs", self.cache_docs, self.load_times_docs[id_doc], True)
+            print "UPDATE DOC TIME: " + str(self.load_times_docs[id_doc])
         self.update_cache_times("docs", self.cache_docs, total_time, False)
+        print "UPDATE DOC TIME: " + str(total_time)
 
     def start_analyze_surrogate(self, query, id_doc, id_proc):
         print "SENDING START_ANALYZE_SURR TO " + str(id_proc)
         surrogate = self.cache_surrogates.get_document(id_doc)
+        was_hit = id_doc in self.loaded_surrogates
         text_doc = None
         if surrogate is None:
+            # TODO: DON'T UPDATE DOCS CACHE
             text_doc = self.cache_docs.get_document(id_doc)
+        if not was_hit:
+            self.loaded_surrogates.add(id_doc)
         job = self.pp_analyze_surr.submit(surrogate, id_doc, text_doc, query, self.stopwords, self.snippet_size,
-                                          self.surrogate_size)
+                                          self.surrogate_size, was_hit)
         self.processes_tasks.append({"job": job, "type": TASKS["SURR"]})
-        self.waiting_surrogate = True
 
     def finish_analyze_surrogate(self, total_time, has_quality, was_hit, id_doc, surrogate):
         if was_hit:
@@ -420,13 +386,9 @@ class SnippetAnalyzer(object):
         else:
             self.update_cache_times("surrogates", self.cache_surrogates,
                                     self.load_times_docs[id_doc] * self.surrogate_size, True)
+        if self.cache_surrogates.get_document(id_doc) is None:
             self.cache_surrogates.add_document(id_doc, surrogate)
         self.update_cache_times("surrogates", self.cache_surrogates, total_time, False)
-        self.waiting_surrogate = False
-        for surrogate_status in self.pending_surrogates_analysis:
-            if surrogate_status["id_doc"] == id_doc:
-                surrogate_status["ready"] = True
-                break
 
     def start_analyze_supersnippet(self, query, id_doc, ss_size, id_proc):
         print "SENDING START_ANALYZE_SS TO " + str(id_proc)
@@ -460,6 +422,7 @@ def worker_load_doc(id_doc, path_doc, query):
     text_doc = clean_html(text_doc)
     task_timer.stop()
     load_time = task_timer.total_time
+    print "WORKER: DOC LOAD TIME: " + str(load_time)
     return id_doc, text_doc, query, load_time
 
 
@@ -474,11 +437,10 @@ def worker_analyze_document(text_doc, query, stopwords, snippet_size, was_hit, i
     return task_timer.total_time, doc_has_quality, was_hit, id_doc
 
 
-def worker_analyze_surrogate(surrogate, id_doc, text_doc, query, stopwords, snippet_size, surrogate_size):
+def worker_analyze_surrogate(surrogate, id_doc, text_doc, query, stopwords, snippet_size, surrogate_size, was_hit):
     task_timer = timer.Timer()
     surrogate_has_quality = None
-    was_hit = surrogate is not None
-    if not was_hit:
+    if surrogate is None:
         surrogate = generate_summary(text_doc, stopwords, surrogate_size)
     else:
         surrogate_has_quality = has_good_quality(surrogate, query, stopwords)
