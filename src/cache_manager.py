@@ -62,8 +62,8 @@ class ExtraDocumentsCache(object):
             self.last_doc_hit = False
         self.doc_sizes[id_doc] = doc_size
         while self.memory_size > self.max_memory_size * MEGABYTE_MULTIPLIER:
-            popped_doc_size = self.doc_sizes.popitem(last=False)
-            self.memory_size -= sys.getsizeof(popped_doc_size)
+            popped_doc_id, popped_doc_size = self.doc_sizes.popitem(last=False)
+            self.memory_size -= popped_doc_size
 
     def check_hit(self, id_doc):
         doc_size = self.doc_sizes.get(id_doc, None)
