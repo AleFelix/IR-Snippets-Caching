@@ -11,6 +11,7 @@ from cache_manager import DocumentsCache
 import timer
 import ConfigParser
 import pp
+import traceback
 
 RESULT_LIST_LENGTH = 10
 OUTPUT_FILENAME = "snippets_stats"
@@ -289,9 +290,10 @@ class SnippetAnalyzer(object):
                 job_result = job()
                 job_type = task["type"]
                 if job_type == TASKS["LOAD"]:
-                    id_doc, text_doc, query, load_time = job_result
-                    self.finish_load_doc(id_doc, text_doc, query, load_time)
-                    # print "CLOSED TASK LOAD FROM " + str(id_task)
+                    if job_result is not None:
+                        id_doc, text_doc, query, load_time = job_result
+                        self.finish_load_doc(id_doc, text_doc, query, load_time)
+                        # print "CLOSED TASK LOAD FROM " + str(id_task)
                     self.processes_tasks.pop(id_task)
                 if job_type == TASKS["DOC"]:
                     doc_has_quality, total_time, was_hit, extra_hits, id_doc = job_result
@@ -394,15 +396,20 @@ class SnippetAnalyzer(object):
         self.update_cache_times("ssnippets", self.cache_ssnippets[ss_size], total_time, False, ss_size)
 
 
+# noinspection PyBroadException
 def worker_load_doc(id_doc, path_doc, query):
-    task_timer = timer.Timer()
-    task_timer.restart()
-    text_doc = get_html_doc(id_doc, path_doc)
-    text_doc = clean_html(text_doc)
-    task_timer.stop()
-    load_time = task_timer.total_time
-    # print "WORKER: DOC LOAD TIME: " + str(load_time)
-    return id_doc, text_doc, query, load_time
+    try:
+        task_timer = timer.Timer()
+        task_timer.restart()
+        text_doc = get_html_doc(id_doc, path_doc)
+        text_doc = clean_html(text_doc)
+        task_timer.stop()
+        load_time = task_timer.total_time
+        # print "WORKER: DOC LOAD TIME: " + str(load_time)
+        return id_doc, text_doc, query, load_time
+    except Exception:
+        print "FAILED TO LOAD: " + str(id_doc) + " IN PATH: " + str(path_doc)
+        traceback.print_exc()
 
 
 def worker_analyze_document(text_doc, query, stopwords, snippet_size, was_hit, extra_hits, id_doc):
