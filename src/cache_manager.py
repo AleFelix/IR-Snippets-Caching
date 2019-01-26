@@ -32,7 +32,7 @@ class DocumentsCache(object):
             self.memory_size += doc_size
         self.documents[id_doc] = document
         while self.memory_size > self.max_memory_size * MEGABYTE_MULTIPLIER:
-            popped_doc = self.documents.popitem(last=False)
+            popped_doc_id, popped_doc = self.documents.popitem(last=False)
             self.memory_size -= sys.getsizeof(popped_doc)
         for extra_cache in self.extra_caches:
             extra_cache.add_document(id_doc, doc_size)

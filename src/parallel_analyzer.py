@@ -58,7 +58,7 @@ class SnippetAnalyzer(object):
 
         self.pp_load_doc = pp.Template(self.job_server, worker_load_doc,
                                        (get_document_path, get_html_doc, clean_html),
-                                       ("warc", "bs4", "timer"))
+                                       ("warc", "bs4", "timer", "traceback"))
         self.pp_analyze_docs = pp.Template(self.job_server, worker_analyze_document,
                                            (has_good_quality, generate_snippet, document_summarizer.summarize_document,
                                             document_summarizer.get_sentences, document_summarizer.get_relevant_terms,
