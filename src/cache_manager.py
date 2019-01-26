@@ -43,6 +43,9 @@ class DocumentsCache(object):
             cache_hits[extra_cache.max_memory_size] = extra_cache.last_doc_hit
         return cache_hits
 
+    def get_document_without_updating(self, id_doc):
+        return self.documents.get(id_doc, None)
+
 
 class ExtraDocumentsCache(object):
     def __init__(self, max_memory_size):

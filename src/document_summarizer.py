@@ -166,4 +166,4 @@ def has_good_quality(text, query, stop_words):
     # print terms_query
     # print "DIVISION"
     # print str((len(same_terms) ** 2) / float(len(terms_query)))
-    return (len(same_terms) ** 2) / float(len(terms_query)) >= 1 if len(terms_query) > 0 else 0
+    return len(terms_query) > 0 and (len(same_terms) ** 2) / float(len(terms_query)) >= 1
