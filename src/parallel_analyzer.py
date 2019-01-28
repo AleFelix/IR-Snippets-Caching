@@ -3,7 +3,8 @@
 import os
 import codecs
 from datetime import datetime
-from document_parser import get_document_path, get_html_doc, clean_html
+from document_parser import get_document_path, get_html_doc, clean_html, get_html_doc_from_file_data, \
+    get_html_doc_from_file_data_fast, get_html_doc_from_file_data_seek, get_html_doc_with_seek
 from document_summarizer import generate_snippet, generate_summary, update_supersnippet, has_good_quality, \
     get_terms_text
 import document_summarizer
@@ -12,6 +13,7 @@ import timer
 import ConfigParser
 import pp
 import traceback
+from file_loader import FileLoader
 
 RESULT_LIST_LENGTH = 10
 OUTPUT_FILENAME = "snippets_stats"
@@ -52,13 +54,17 @@ class SnippetAnalyzer(object):
         self.dir_output = dir_output
         self.start_datetime = datetime.now()
 
-        self.job_server = pp.Server()
+        self.job_server = pp.Server(24)
         self.num_cpus = self.job_server.get_ncpus()
         self.processes_tasks = []
+        self.file_loader = FileLoader(200)
 
         self.pp_load_doc = pp.Template(self.job_server, worker_load_doc,
-                                       (get_document_path, get_html_doc, clean_html),
-                                       ("warc", "bs4", "timer", "traceback"))
+                                       (get_document_path, get_html_doc, clean_html, get_html_doc_from_file_data,
+                                        get_html_doc_from_file_data_fast, get_html_doc_from_file_data_seek,
+                                        get_html_doc_with_seek),
+                                       ("warc", "bs4", "timer", "traceback", "mmap", "gzip", "io",
+                                        "warcio.archiveiterator"))
         self.pp_analyze_docs = pp.Template(self.job_server, worker_analyze_document,
                                            (has_good_quality, generate_snippet, document_summarizer.summarize_document,
                                             document_summarizer.get_sentences, document_summarizer.get_relevant_terms,
@@ -264,16 +270,19 @@ class SnippetAnalyzer(object):
                 current_pos_doc += 1
                 loaded, extra_hits = self.check_loaded_doc(id_doc)
                 if not loaded:
-                    self.send_job(TASKS["LOAD"], id_doc, self.id_queries[id_query])
+                    file_data, index_docs = self.file_loader.get_file(self.filepath_docs[id_doc])
+                    self.send_job(TASKS["LOAD"], id_doc, self.id_queries[id_query], file_data=file_data,
+                                  index_docs=index_docs)
                 else:
                     self.send_job(TASKS["DOC"], id_doc, self.id_queries[id_query], True, extra_hits)
                     self.send_job(TASKS["SURR"], id_doc, self.id_queries[id_query], True)
                     for ss_size in self.ssnippet_sizes:
                         self.send_job(TASKS["SSNIPP"], id_doc, self.id_queries[id_query], True, None, ss_size)
 
-    def send_job(self, task, id_doc, query=None, was_hit=None, extra_hits=None, ss_size=None):
+    def send_job(self, task, id_doc, query=None, was_hit=None, extra_hits=None, ss_size=None, file_data=None,
+                 index_docs=None):
         if task == TASKS["LOAD"]:
-            self.start_load_doc(id_doc, query)
+            self.start_load_doc(id_doc, query, file_data, index_docs)
         if task == TASKS["DOC"]:
             self.start_analyze_document(id_doc, query, was_hit, extra_hits)
         if task == TASKS["SURR"]:
@@ -318,10 +327,10 @@ class SnippetAnalyzer(object):
         extra_hits = self.cache_docs.check_hits_extra_caches()
         return loaded, extra_hits
 
-    def start_load_doc(self, id_doc, query):
+    def start_load_doc(self, id_doc, query, file_data, index_docs):
         # print "SENDING START_LOAD TO " + str(id_proc)
         path_doc = self.filepath_docs[id_doc]
-        job = self.pp_load_doc.submit(id_doc, path_doc, query)
+        job = self.pp_load_doc.submit(id_doc, path_doc, query, file_data, index_docs)
         self.processes_tasks.append({"job": job, "type": TASKS["LOAD"]})
 
     def finish_load_doc(self, id_doc, text_doc, query, load_time):
@@ -397,11 +406,12 @@ class SnippetAnalyzer(object):
 
 
 # noinspection PyBroadException
-def worker_load_doc(id_doc, path_doc, query):
+def worker_load_doc(id_doc, path_doc, query, file_data, index_docs):
     try:
         task_timer = timer.Timer()
         task_timer.restart()
-        text_doc = get_html_doc(id_doc, path_doc)
+        # text_doc = get_html_doc(id_doc, path_doc)
+        text_doc = get_html_doc_from_file_data_seek(id_doc, file_data, index_docs)
         text_doc = clean_html(text_doc)
         task_timer.stop()
         load_time = task_timer.total_time
