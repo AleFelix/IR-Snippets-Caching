@@ -7,19 +7,15 @@ from document_parser import get_document_path, get_html_doc, clean_html, get_htm
     get_html_doc_from_file_data_fast, get_html_doc_from_file_data_seek, get_html_doc_with_seek
 from document_summarizer import generate_snippet, generate_summary, update_supersnippet, has_good_quality, \
     get_terms_text
-import document_summarizer
 from cache_manager import DocumentsCache
 import timer
-import ConfigParser
-import pp
 import traceback
 from file_loader import FileLoader
+import multiprocessing
 
 RESULT_LIST_LENGTH = 10
 OUTPUT_FILENAME = "snippets_stats"
 OUTPUT_EXT = "txt"
-CONFIGURATION = "configuration"
-FILE_PATH = os.path.abspath(os.path.dirname(__file__))
 
 TASKS = {"LOAD": 0, "DOC": 1, "SURR": 2, "SSNIPP": 3}
 
@@ -54,38 +50,10 @@ class SnippetAnalyzer(object):
         self.dir_output = dir_output
         self.start_datetime = datetime.now()
 
-        self.job_server = pp.Server(24)
-        self.num_cpus = self.job_server.get_ncpus()
+        self.num_cpus = multiprocessing.cpu_count()
+        self.pool = multiprocessing.Pool()
         self.processes_tasks = []
         self.file_loader = FileLoader(200)
-
-        self.pp_load_doc = pp.Template(self.job_server, worker_load_doc,
-                                       (get_document_path, get_html_doc, clean_html, get_html_doc_from_file_data,
-                                        get_html_doc_from_file_data_fast, get_html_doc_from_file_data_seek,
-                                        get_html_doc_with_seek),
-                                       ("warc", "bs4", "timer", "traceback", "mmap", "gzip", "io",
-                                        "warcio.archiveiterator"))
-        self.pp_analyze_docs = pp.Template(self.job_server, worker_analyze_document,
-                                           (has_good_quality, generate_snippet, document_summarizer.summarize_document,
-                                            document_summarizer.get_sentences, document_summarizer.get_relevant_terms,
-                                            document_summarizer.get_terms_text,
-                                            document_summarizer.compute_sentence_relevance,
-                                            document_summarizer.compute_sentence_query_relevance),
-                                           ("nltk", "collections", "timer", "document_summarizer"))
-        self.pp_analyze_surr = pp.Template(self.job_server, worker_analyze_surrogate,
-                                           (generate_summary, has_good_quality, generate_snippet,
-                                            document_summarizer.summarize_document, document_summarizer.get_sentences,
-                                            document_summarizer.get_relevant_terms, document_summarizer.get_terms_text,
-                                            document_summarizer.compute_sentence_relevance,
-                                            document_summarizer.compute_sentence_query_relevance),
-                                           ("nltk", "collections", "timer", "document_summarizer"))
-        self.pp_analyze_ssnip = pp.Template(self.job_server, worker_analyze_supersnippet,
-                                            (update_supersnippet, has_good_quality, generate_snippet,
-                                             document_summarizer.summarize_document, document_summarizer.get_sentences,
-                                             document_summarizer.get_relevant_terms, document_summarizer.get_terms_text,
-                                             document_summarizer.compute_sentence_relevance,
-                                             document_summarizer.compute_sentence_query_relevance),
-                                            ("nltk", "collections", "timer", "document_summarizer"))
 
     def create_output_dir(self):
         try:
@@ -295,8 +263,8 @@ class SnippetAnalyzer(object):
     def listen_answers(self):
         for id_task, task in enumerate(self.processes_tasks):
             job = task["job"]
-            if job.finished:
-                job_result = job()
+            if job.ready():
+                job_result = job.get()
                 job_type = task["type"]
                 if job_type == TASKS["LOAD"]:
                     if job_result is not None:
@@ -330,7 +298,7 @@ class SnippetAnalyzer(object):
     def start_load_doc(self, id_doc, query, file_data, index_docs):
         # print "SENDING START_LOAD TO " + str(id_proc)
         path_doc = self.filepath_docs[id_doc]
-        job = self.pp_load_doc.submit(id_doc, path_doc, query, file_data, index_docs)
+        job = self.pool.apply_async(worker_load_doc, (id_doc, path_doc, query, file_data, index_docs))
         self.processes_tasks.append({"job": job, "type": TASKS["LOAD"]})
 
     def finish_load_doc(self, id_doc, text_doc, query, load_time):
@@ -347,8 +315,8 @@ class SnippetAnalyzer(object):
     def start_analyze_document(self, id_doc, query, was_hit, extra_hits):
         # print "SENDING START_ANALYZE_DOC TO " + str(id_proc)
         text_doc = self.cache_docs.get_document(id_doc)
-        job = self.pp_analyze_docs.submit(text_doc, query, self.stopwords, self.snippet_size, was_hit, extra_hits,
-                                          id_doc)
+        job = self.pool.apply_async(worker_analyze_document, (text_doc, query, self.stopwords, self.snippet_size,
+                                                              was_hit, extra_hits, id_doc))
         self.processes_tasks.append({"job": job, "type": TASKS["DOC"]})
 
     def finish_analyze_document(self, total_time, doc_has_quality, was_hit, extra_hits, id_doc):
@@ -368,8 +336,8 @@ class SnippetAnalyzer(object):
         text_doc = None
         if surrogate is None:
             text_doc = self.cache_docs.get_document_without_updating(id_doc)
-        job = self.pp_analyze_surr.submit(surrogate, id_doc, text_doc, query, self.stopwords, self.snippet_size,
-                                          self.surrogate_size)
+        job = self.pool.apply_async(worker_analyze_surrogate, (surrogate, id_doc, text_doc, query, self.stopwords,
+                                                               self.snippet_size, self.surrogate_size))
         self.processes_tasks.append({"job": job, "type": TASKS["SURR"]})
 
     def finish_analyze_surrogate(self, total_time, has_quality, id_doc, surrogate):
@@ -388,8 +356,8 @@ class SnippetAnalyzer(object):
         # print "SENDING START_ANALYZE_SS TO " + str(id_proc)
         ssnippet = self.cache_ssnippets[ss_size].get_document(id_doc)
         text_doc = self.cache_docs.get_document_without_updating(id_doc)
-        job = self.pp_analyze_ssnip.submit(ssnippet, id_doc, text_doc, query, self.stopwords, self.snippet_size,
-                                           ss_size, self.ssnippet_threshold)
+        job = self.pool.apply_async(worker_analyze_supersnippet, (ssnippet, id_doc, text_doc, query, self.stopwords,
+                                                                  self.snippet_size, ss_size, self.ssnippet_threshold))
         self.processes_tasks.append({"job": job, "type": TASKS["SSNIPP"]})
 
     def finish_analyze_supersnippet(self, total_time, has_quality, id_doc, ss_size, ssnippet):
@@ -462,39 +430,3 @@ def worker_analyze_supersnippet(ssnippet, id_doc, text_doc, query, stopwords, sn
         update_supersnippet(ssnippet, snippet, ss_size, ss_threshold, stopwords)
         task_timer.stop()
     return task_timer.total_time, has_quality, id_doc, ss_size, ssnippet
-
-
-def get_config_options(config_parser, options):
-    configuration = {}
-    for option_name in options:
-        configuration[option_name] = config_parser.get(CONFIGURATION, option_name)
-    return configuration
-
-
-def master_main():
-    options = ["path_results", "path_queries", "path_stopwords", "root_corpus", "snippet_size", "max_queries",
-               "surrogate_size", "ssnippet_sizes", "ssnippet_threshold", "cache_memory_sizes", "dir_output"]
-    config_parser = ConfigParser.ConfigParser()
-    # try:
-    config_parser.readfp(open(FILE_PATH + "/analyzer.conf"))
-    configuration = get_config_options(config_parser, options)
-    cache_memory_sizes = [int(size) for size in configuration["cache_memory_sizes"].split(",")]
-    ssnippet_sizes = [int(size) for size in configuration["ssnippet_sizes"].split(",")]
-    snippet_analyzer = SnippetAnalyzer(configuration["path_results"], configuration["path_queries"],
-                                       configuration["path_stopwords"], configuration["root_corpus"],
-                                       configuration["snippet_size"], configuration["max_queries"],
-                                       configuration["surrogate_size"], ssnippet_sizes,
-                                       configuration["ssnippet_threshold"], cache_memory_sizes,
-                                       configuration["dir_output"])
-    snippet_analyzer.start_analysis()
-    print snippet_analyzer.statistics
-    # except IOError, exception:
-    #    print "ERROR: " + str(exception)
-    # except ConfigParser.NoSectionError:
-    #   print "ERROR: Section [" + CONFIGURATION + "] not found in analyzer.conf"
-    # except ConfigParser.NoOptionError, exception:
-    #    print "ERROR: " + exception.message
-
-
-if __name__ == '__main__':
-    master_main()
