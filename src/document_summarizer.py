@@ -1,17 +1,32 @@
 # -*- coding: utf-8 -*-
 
-# from nltk import word_tokenize, sent_tokenize
-# from collections import Counter
 import nltk
 import collections
+import re
 
 LIMIT = 0.3
 MAX_DISTANCE = 4
 MIN_SIZE = 3
+# TOKENIZER = nltk.tokenize.ToktokTokenizer()
+
+
+def translate(to_translate):
+    tabin = u"áéíóú"
+    tabout = u"aeiou"
+    tabin = [ord(char) for char in tabin]
+    translate_table = dict(zip(tabin, tabout))
+    return to_translate.translate(translate_table)
+
+
+def fast_tokenize(text):
+    text = text.lower()
+    text = translate(text)
+    text = re.sub(u"[^a-zñ]|_", " ", text)
+    return text.split()
 
 
 def get_terms_text(text, stop_words):
-    return [token.lower() for token in nltk.word_tokenize(text) if token not in stop_words and len(token) >= 3]
+    return (token.lower() for token in fast_tokenize(text) if token not in stop_words and len(token) >= MIN_SIZE)
 
 
 def get_sentences(text_doc):
@@ -25,9 +40,9 @@ def get_sentences(text_doc):
 
 def get_relevant_terms(text_doc, stop_words):
     stop_words = set(stop_words)
-    terms = get_terms_text(text_doc, stop_words)
+    terms = list(get_terms_text(text_doc, stop_words))
     terms_dist = collections.Counter(terms)
-    terms_limit = int(len(terms) * 0.3)
+    terms_limit = int(len(terms) * LIMIT)
     freq_count = 0
     relevant_terms = set()
     for term, freq in terms_dist.most_common():
@@ -39,7 +54,7 @@ def get_relevant_terms(text_doc, stop_words):
 
 
 def compute_sentence_relevance(sentence, relevant_terms, stop_words):
-    sentence = get_terms_text(sentence, stop_words)
+    sentence = list(get_terms_text(sentence, stop_words))
     segments_relevance = []
     number_relevants_segment = 0
     number_terms_found = 0
@@ -56,7 +71,7 @@ def compute_sentence_relevance(sentence, relevant_terms, stop_words):
                 number_terms_found += 1
                 number_terms_segment = number_terms_found
         else:
-            if position - end_position <= 4:
+            if position - end_position <= MAX_DISTANCE:
                 if term in relevant_terms:
                     end_position = position
                     number_relevants_segment += 1
@@ -87,7 +102,7 @@ def compute_sentence_relevance(sentence, relevant_terms, stop_words):
 
 
 def compute_sentence_query_relevance(sentence, query):
-    sentence = [token.lower() for token in nltk.word_tokenize(sentence) if len(token) >= 3]
+    sentence = (token.lower() for token in fast_tokenize(sentence) if len(token) >= MIN_SIZE)
     query_count = sum(1 for token in sentence if token in set(query))
     return (query_count ** 2) / float(len(query)) if len(query) > 0 else 0
 
