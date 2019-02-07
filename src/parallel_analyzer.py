@@ -13,12 +13,15 @@ from file_loader import FileLoader
 import multiprocessing
 from threading import Thread
 from collections import deque
+import cProfile
 
 RESULT_LIST_LENGTH = 10
 OUTPUT_FILENAME = "snippets_stats"
 OUTPUT_EXT = "txt"
 
 TASKS = {"LOAD": 0, "DOC": 1, "SURR": 2, "SSNIPP": 3}
+
+DEBUG = False
 
 
 class SnippetAnalyzer(object):
@@ -176,7 +179,7 @@ class SnippetAnalyzer(object):
             self.more_queries = False
             for index, line in enumerate(file_queries):
                 if index > self.last_query_line:
-                    query = get_terms_text(line.strip(), self.stopwords)
+                    query = list(get_terms_text(line.strip(), self.stopwords))
                     self.id_queries[index + 1] = query
                     self.last_query_line += 1
                     self.num_of_loaded_queries += 1
@@ -378,8 +381,12 @@ class SnippetAnalyzer(object):
     def start_load_doc(self, id_doc, query, file_data, index_docs):
         # print "SENDING START_LOAD TO " + str(id_proc)
         path_doc = self.filepath_docs[id_doc]
-        job = self.pool.apply_async(worker_load_doc, (id_doc, path_doc, query, file_data, index_docs,
+        if DEBUG:
+            job = self.pool.apply_async(profile_wld, (id_doc, path_doc, query, file_data, index_docs,
                                                       self.results_queue, self.process_counter))
+        else:
+            job = self.pool.apply_async(worker_load_doc, (id_doc, path_doc, query, file_data, index_docs,
+                                                          self.results_queue, self.process_counter))
         # self.processes_tasks.append({"job": job, "type": TASKS["LOAD"]})
         self.processes_tasks[self.process_counter] = job
         self.processes_queue.append(self.process_counter)
@@ -399,9 +406,14 @@ class SnippetAnalyzer(object):
     def start_analyze_document(self, id_doc, query, was_hit, extra_hits):
         # print "SENDING START_ANALYZE_DOC TO " + str(id_proc)
         text_doc = self.cache_docs.get_document(id_doc)
-        job = self.pool.apply_async(worker_analyze_document, (text_doc, query, self.stopwords, self.snippet_size,
-                                                              was_hit, extra_hits, id_doc, self.results_queue,
-                                                              self.process_counter))
+        if DEBUG:
+            job = self.pool.apply_async(profile_wad, (text_doc, query, self.stopwords, self.snippet_size,
+                                                      was_hit, extra_hits, id_doc, self.results_queue,
+                                                      self.process_counter))
+        else:
+            job = self.pool.apply_async(worker_analyze_document, (text_doc, query, self.stopwords, self.snippet_size,
+                                                                  was_hit, extra_hits, id_doc, self.results_queue,
+                                                                  self.process_counter))
         # self.processes_tasks.append({"job": job, "type": TASKS["DOC"]})
         self.processes_tasks[self.process_counter] = job
         self.processes_queue.append(self.process_counter)
@@ -424,9 +436,14 @@ class SnippetAnalyzer(object):
         text_doc = None
         if surrogate is None:
             text_doc = self.cache_docs.get_document_without_updating(id_doc)
-        job = self.pool.apply_async(worker_analyze_surrogate, (surrogate, id_doc, text_doc, query, self.stopwords,
-                                                               self.snippet_size, self.surrogate_size,
-                                                               self.results_queue, self.process_counter))
+        if DEBUG:
+            job = self.pool.apply_async(profile_was, (surrogate, id_doc, text_doc, query, self.stopwords,
+                                                      self.snippet_size, self.surrogate_size,
+                                                      self.results_queue, self.process_counter))
+        else:
+            job = self.pool.apply_async(worker_analyze_surrogate, (surrogate, id_doc, text_doc, query, self.stopwords,
+                                                                   self.snippet_size, self.surrogate_size,
+                                                                   self.results_queue, self.process_counter))
         # self.processes_tasks.append({"job": job, "type": TASKS["SURR"]})
         self.processes_tasks[self.process_counter] = job
         self.processes_queue.append(self.process_counter)
@@ -448,9 +465,15 @@ class SnippetAnalyzer(object):
         # print "SENDING START_ANALYZE_SS TO " + str(id_proc)
         ssnippet = self.cache_ssnippets[ss_size].get_document(id_doc)
         text_doc = self.cache_docs.get_document_without_updating(id_doc)
-        job = self.pool.apply_async(worker_analyze_supersnippet, (ssnippet, id_doc, text_doc, query, self.stopwords,
-                                                                  self.snippet_size, ss_size, self.ssnippet_threshold,
-                                                                  self.results_queue, self.process_counter))
+        if DEBUG:
+            job = self.pool.apply_async(profile_wss, (ssnippet, id_doc, text_doc, query, self.stopwords,
+                                                      self.snippet_size, ss_size, self.ssnippet_threshold,
+                                                      self.results_queue, self.process_counter))
+        else:
+            job = self.pool.apply_async(worker_analyze_supersnippet, (ssnippet, id_doc, text_doc, query, self.stopwords,
+                                                                      self.snippet_size, ss_size,
+                                                                      self.ssnippet_threshold, self.results_queue,
+                                                                      self.process_counter))
         # self.processes_tasks.append({"job": job, "type": TASKS["SSNIPP"]})
         self.processes_tasks[self.process_counter] = job
         self.processes_queue.append(self.process_counter)
@@ -469,6 +492,29 @@ class SnippetAnalyzer(object):
         self.update_cache_times("ssnippets", self.cache_ssnippets[ss_size], total_time, False, ss_size)
 
 
+def profile_wld(id_doc, path_doc, query, file_data, index_docs, results_queue, id_proc):
+    cProfile.runctx("worker_load_doc(id_doc, path_doc, query, file_data, index_docs, results_queue, id_proc)",
+                    globals(), locals(), "profiling/profile_wld-%d.out" % id_proc)
+
+
+def profile_wad(text_doc, query, stopwords, snippet_size, was_hit, extra_hits, id_doc, results_queue, id_proc):
+    cProfile.runctx("worker_analyze_document(text_doc, query, stopwords, snippet_size, was_hit, extra_hits, id_doc,"
+                    "results_queue, id_proc)", globals(), locals(), "profiling/profile_wad-%d.out" % id_proc)
+
+
+def profile_was(surrogate, id_doc, text_doc, query, stopwords, snippet_size, surrogate_size, results_queue, id_proc):
+    cProfile.runctx("worker_analyze_surrogate(surrogate, id_doc, text_doc, query, stopwords, snippet_size,"
+                    "surrogate_size, results_queue, id_proc)", globals(), locals(),
+                    "profiling/profile_was-%d.out" % id_proc)
+
+
+def profile_wss(ssnippet, id_doc, text_doc, query, stopwords, snippet_size, ss_size, ss_threshold, results_queue,
+                id_proc):
+    cProfile.runctx("worker_analyze_supersnippet(ssnippet, id_doc, text_doc, query, stopwords, snippet_size, ss_size,"
+                    "ss_threshold, results_queue, id_proc)", globals(), locals(),
+                    "profiling/profile_wss-%d.out" % id_proc)
+
+
 # noinspection PyBroadException
 def worker_load_doc(id_doc, path_doc, query, file_data, index_docs, results_queue, id_proc):
     try:
@@ -479,7 +525,7 @@ def worker_load_doc(id_doc, path_doc, query, file_data, index_docs, results_queu
         text_doc = clean_html(text_doc)
         task_timer.stop()
         load_time = task_timer.total_time
-        print "WORKER: DOC LOAD TIME: " + str(load_time)
+        # print "WORKER: DOC LOAD TIME: " + str(load_time)
         # return id_doc, text_doc, query, load_time
         results_queue.put({"TASK": TASKS["LOAD"], "RESULT": (id_doc, text_doc, query, load_time, id_proc)})
     except Exception:
@@ -496,7 +542,7 @@ def worker_analyze_document(text_doc, query, stopwords, snippet_size, was_hit, e
     task_timer.restart()
     generate_snippet(text_doc, stopwords, snippet_size, query)
     task_timer.stop()
-    print "WORKER: DOC TIME: " + str(task_timer.total_time)
+    # print "WORKER: DOC TIME: " + str(task_timer.total_time)
     # return task_timer.total_time, doc_has_quality, was_hit, extra_hits, id_doc
     results_queue.put({"TASK": TASKS["DOC"], "RESULT": (task_timer.total_time, doc_has_quality, was_hit, extra_hits,
                                                         id_doc, id_proc)})
@@ -511,7 +557,7 @@ def worker_analyze_surrogate(surrogate, id_doc, text_doc, query, stopwords, snip
     task_timer.restart()
     generate_snippet(surrogate, stopwords, snippet_size, query)
     task_timer.stop()
-    print "WORKER: SURR TIME: " + str(task_timer.total_time)
+    # print "WORKER: SURR TIME: " + str(task_timer.total_time)
     # return task_timer.total_time, surrogate_has_quality, id_doc, surrogate
     results_queue.put({"TASK": TASKS["SURR"], "RESULT": (task_timer.total_time, surrogate_has_quality, id_doc,
                                                          surrogate, id_proc)})
@@ -535,7 +581,7 @@ def worker_analyze_supersnippet(ssnippet, id_doc, text_doc, query, stopwords, sn
         snippet = generate_snippet(text_doc, stopwords, snippet_size, query)
         update_supersnippet(ssnippet, snippet, ss_size, ss_threshold, stopwords)
         task_timer.stop()
-    print "WORKER: SSNIP TIME: " + str(task_timer.total_time)
+    # print "WORKER: SSNIP TIME: " + str(task_timer.total_time)
     # return task_timer.total_time, has_quality, id_doc, ss_size, ssnippet
     results_queue.put({"TASK": TASKS["SSNIPP"], "RESULT": (task_timer.total_time, has_quality, id_doc, ss_size,
                                                            ssnippet, id_proc)})
