@@ -27,7 +27,7 @@ PATH_STATUS = "/home/ale/Repositorios/IR-Snippet-Caching/processed/status"
 # PATH_STATUS = "/storage/adunogent/analisis/status"
 
 LOCK_READ = multiprocessing.Lock()
-LOCK_WRITE = multiprocessing.Lock()
+# LOCK_WRITE = multiprocessing.Lock()
 
 
 class ClueWeb12Parser(object):
@@ -41,9 +41,12 @@ class ClueWeb12Parser(object):
         self.root_processed = root_processed
         self.path_index = path_index
         self.pool = multiprocessing.Pool()
-        self.processes = collections.deque()
+        self.processes_jobs = {}
+        self.processes_ids = collections.deque()
         self.num_processed_files = 0
         self.path_status = path_status
+        self.results_queue = multiprocessing.Manager().Queue()
+        self.current_id_proc = 0
 
     def get_document_path(self, id_doc):
         items_id_doc = id_doc.split("-")
@@ -74,23 +77,37 @@ class ClueWeb12Parser(object):
                 if path_file not in self.processed_files and id_doc not in self.document_index:
                     self.processed_files.add(path_file)
                     path_new_file = get_new_document_path(self.root_processed, id_doc)
-                    job = self.pool.apply_async(load_file, (path_file, path_new_file))
-                    self.processes.append(job)
-                    print "Added Subprocess P" + str(len(self.processed_files)) + " to Queue for file: " + path_file
+                    job = self.pool.apply_async(load_file, (path_file, path_new_file, self.results_queue,
+                                                            self.current_id_proc))
+                    self.processes_jobs[self.current_id_proc] = job
+                    self.processes_ids.append(self.current_id_proc)
+                    print "Added Subprocess P" + str(self.current_id_proc) + " to Queue for file: " + path_file
+                    self.current_id_proc += 1
         self.pool.close()
         self.listen_answers()
         self.write_index()
 
     def listen_answers(self):
-        while len(self.processes) > 0:
-            partial_index = self.processes[0].get()
-            for id_doc in partial_index:
-                self.document_index[id_doc] = partial_index[id_doc]
-            self.processes.popleft()
-            self.num_processed_files += 1
-            if self.num_processed_files % 10 == 0:
-                self.write_index()
-                self.num_processed_files = 0
+        while len(self.processes_jobs) > 0:
+            if not self.results_queue.empty():
+                result = self.results_queue.get()
+                id_proc = result["ID_PROC"]
+                partial_index = result["INDEX"]
+                for id_doc in partial_index:
+                    self.document_index[id_doc] = partial_index[id_doc]
+                self.processes_jobs[id_proc].get()
+                self.processes_jobs.pop(id_proc)
+                self.processes_ids.remove(id_proc)
+                self.num_processed_files += 1
+                if self.num_processed_files % 10 == 0:
+                    self.write_index()
+                    self.num_processed_files = 0
+            elif len(self.processes_ids) > 0:
+                id_proc = self.processes_ids[0]
+                if self.processes_jobs[id_proc].ready():
+                    self.processes_jobs[id_proc].get()
+                    self.processes_jobs.pop(id_proc)
+                    self.processes_ids.remove(id_proc)
 
     def write_index(self):
         try:
@@ -103,9 +120,10 @@ class ClueWeb12Parser(object):
         except OSError as e:
             if e.errno != errno.EEXIST:
                 raise
+        write_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print "[" + write_time + "] Flushing Index to disk"
         with open(self.path_index, mode="w+") as file_index:
             file_index.write(cPickle.dumps(self.document_index))
-        write_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with codecs.open(self.path_status, mode="a", encoding="utf-8") as file_status:
             file_status.write("[" + write_time + "]\n\tINDEX SIZE: " + str(len(self.document_index)) + "\n")
             file_status.write("\tADDED FILES: " + str(self.num_processed_files) + "\n")
@@ -159,7 +177,7 @@ def fast_tokenize(text):
     return text.split()
 
 
-def load_file(path_file, path_new_file):
+def load_file(path_file, path_new_file, results_queue, id_proc):
     with LOCK_READ:
         print "Subprocess Started Loading: " + path_file
         with open(path_file, "rb") as compressed_file:
@@ -180,7 +198,7 @@ def load_file(path_file, path_new_file):
     virtual_file.close()
     print "Subprocess Finished Loading: " + path_file
     document_index = write_file(path_new_file, documents)
-    return document_index
+    results_queue.put({"ID_PROC": id_proc, "INDEX": document_index})
 
 
 def write_file(path_file, documents):
@@ -190,15 +208,15 @@ def write_file(path_file, documents):
         if e.errno != errno.EEXIST:
             raise
     document_index = {}
-    with LOCK_WRITE:
-        with codecs.open(path_file, mode="w+", encoding="utf-8") as output_file:
-            for document in documents:
-                id_doc = document["id-doc"]
-                output_file.write(id_doc + "\n")
-                document_index[id_doc] = {"start": output_file.tell()}
-                for sentence in document["text"]:
-                    output_file.write(",".join(sentence) + "\n")
-                document_index[id_doc]["length"] = output_file.tell() - document_index[id_doc]["start"]
+    # with LOCK_WRITE:
+    with codecs.open(path_file, mode="w+", encoding="utf-8") as output_file:
+        for document in documents:
+            id_doc = document["id-doc"]
+            output_file.write(id_doc + "\n")
+            document_index[id_doc] = {"start": output_file.tell()}
+            for sentence in document["text"]:
+                output_file.write(",".join(sentence) + "\n")
+            document_index[id_doc]["length"] = output_file.tell() - document_index[id_doc]["start"]
     print "Subprocess Finished Writing: " + path_file
     return document_index
 
