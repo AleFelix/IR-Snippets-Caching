@@ -27,6 +27,7 @@ PATH_STATUS = "/home/ale/Repositorios/IR-Snippet-Caching/processed/status"
 # PATH_STATUS = "/storage/adunogent/analisis/status"
 
 LOCK_READ = multiprocessing.Lock()
+LOCK_WRITE = multiprocessing.Lock()
 
 
 class ClueWeb12Parser(object):
@@ -75,6 +76,7 @@ class ClueWeb12Parser(object):
                     path_new_file = get_new_document_path(self.root_processed, id_doc)
                     job = self.pool.apply_async(load_file, (path_file, path_new_file))
                     self.processes.append(job)
+                    print "Added Subprocess P" + str(len(self.processed_files)) + " to Queue for file: " + path_file
         self.pool.close()
         self.listen_answers()
         self.write_index()
@@ -188,14 +190,15 @@ def write_file(path_file, documents):
         if e.errno != errno.EEXIST:
             raise
     document_index = {}
-    with codecs.open(path_file, mode="w+", encoding="utf-8") as output_file:
-        for document in documents:
-            id_doc = document["id-doc"]
-            output_file.write(id_doc + "\n")
-            document_index[id_doc] = {"start": output_file.tell()}
-            for sentence in document["text"]:
-                output_file.write(",".join(sentence) + "\n")
-            document_index[id_doc]["length"] = output_file.tell() - document_index[id_doc]["start"]
+    with LOCK_WRITE:
+        with codecs.open(path_file, mode="w+", encoding="utf-8") as output_file:
+            for document in documents:
+                id_doc = document["id-doc"]
+                output_file.write(id_doc + "\n")
+                document_index[id_doc] = {"start": output_file.tell()}
+                for sentence in document["text"]:
+                    output_file.write(",".join(sentence) + "\n")
+                document_index[id_doc]["length"] = output_file.tell() - document_index[id_doc]["start"]
     print "Subprocess Finished Writing: " + path_file
     return document_index
 
