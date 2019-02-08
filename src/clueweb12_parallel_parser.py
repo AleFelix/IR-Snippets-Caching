@@ -147,6 +147,7 @@ def get_new_document_path(root_processed, id_doc):
 
 def clean_html(html_doc):
     html_doc = re.sub(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>", "", html_doc, flags=re.IGNORECASE)
+    html_doc = re.sub(r"\x00", " ", html_doc, flags=re.IGNORECASE)
     return re.sub(r"<[^>]*?>|&nbsp;", "", html_doc, flags=re.IGNORECASE)
 
 
