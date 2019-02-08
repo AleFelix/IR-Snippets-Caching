@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import io
 import re
 import nltk
 import warc
@@ -9,16 +10,27 @@ import time
 import errno
 import codecs
 import cPickle
+import datetime
+import collections
 import multiprocessing
 
 ROOT_CORPUS = "/home/ale/Repositorios/IR-Snippet-Caching/clueweb12/ClueWeb12_"
 PATH_RESULTS = "/home/ale/Repositorios/IR-Snippet-Caching/result_list/PL2_2.res"
 ROOT_PROCESSED = "/home/ale/Repositorios/IR-Snippet-Caching/processed/ClueWeb12_"
 PATH_INDEX = "/home/ale/Repositorios/IR-Snippet-Caching/processed/index"
+PATH_STATUS = "/home/ale/Repositorios/IR-Snippet-Caching/processed/status"
+
+# ROOT_CORPUS = "/storage/tolosoft/clueweb12/ClueWeb12_"
+# PATH_RESULTS = "/storage/adunogent/analisis/result_list/TF_IDF-100.res"
+# ROOT_PROCESSED = "/storage/adunogent/analisis/corpus/ClueWeb12_"
+# PATH_INDEX = "/storage/adunogent/analisis/index"
+# PATH_STATUS = "/storage/adunogent/analisis/status"
+
+LOCK_READ = multiprocessing.Lock()
 
 
 class ClueWeb12Parser(object):
-    def __init__(self, root_corpus, path_results, root_processed, path_index):
+    def __init__(self, root_corpus, path_results, root_processed, path_index, path_status):
         self.root_corpus = root_corpus
         self.path_results = path_results
         self.filepath_docs = {}
@@ -28,7 +40,9 @@ class ClueWeb12Parser(object):
         self.root_processed = root_processed
         self.path_index = path_index
         self.pool = multiprocessing.Pool()
-        self.processes = []
+        self.processes = collections.deque()
+        self.num_processed_files = 0
+        self.path_status = path_status
 
     def get_document_path(self, id_doc):
         items_id_doc = id_doc.split("-")
@@ -52,14 +66,16 @@ class ClueWeb12Parser(object):
                     self.filepath_docs[id_doc] = filepath_doc
 
     def process_files(self):
+        self.read_index()
         for id_query in self.results_per_id_query:
             for id_doc in self.results_per_id_query[id_query]:
-                if self.filepath_docs[id_doc] not in self.processed_files:
-                    path_file = self.filepath_docs[id_doc]
+                path_file = self.filepath_docs[id_doc]
+                if path_file not in self.processed_files and id_doc not in self.document_index:
                     self.processed_files.add(path_file)
                     path_new_file = get_new_document_path(self.root_processed, id_doc)
                     job = self.pool.apply_async(load_file, (path_file, path_new_file))
                     self.processes.append(job)
+        self.pool.close()
         self.listen_answers()
         self.write_index()
 
@@ -68,7 +84,11 @@ class ClueWeb12Parser(object):
             partial_index = self.processes[0].get()
             for id_doc in partial_index:
                 self.document_index[id_doc] = partial_index[id_doc]
-            self.processes.pop(0)
+            self.processes.popleft()
+            self.num_processed_files += 1
+            if self.num_processed_files % 10 == 0:
+                self.write_index()
+                self.num_processed_files = 0
 
     def write_index(self):
         try:
@@ -76,8 +96,24 @@ class ClueWeb12Parser(object):
         except OSError as e:
             if e.errno != errno.EEXIST:
                 raise
+        try:
+            os.makedirs(os.path.dirname(self.path_status))
+        except OSError as e:
+            if e.errno != errno.EEXIST:
+                raise
         with open(self.path_index, mode="w+") as file_index:
             file_index.write(cPickle.dumps(self.document_index))
+        write_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with codecs.open(self.path_status, mode="a", encoding="utf-8") as file_status:
+            file_status.write("[" + write_time + "]\n\tINDEX SIZE: " + str(len(self.document_index)) + "\n")
+            file_status.write("\tADDED FILES: " + str(self.num_processed_files) + "\n")
+
+    def read_index(self):
+        try:
+            with open(self.path_index, mode="r") as file_index:
+                self.document_index = cPickle.load(file_index)
+        except IOError:
+            pass
 
 
 def get_new_document_path(root_processed, id_doc):
@@ -122,9 +158,12 @@ def fast_tokenize(text):
 
 
 def load_file(path_file, path_new_file):
-    print "Subprocess Started Loading: " + path_file
-    gz = gzip.open(path_file, 'rb')
-    file_doc = warc.WARCFile(fileobj=gz)
+    with LOCK_READ:
+        print "Subprocess Started Loading: " + path_file
+        with open(path_file, "rb") as compressed_file:
+            virtual_file = io.BytesIO(compressed_file.read())
+    decompressed_file = gzip.GzipFile(fileobj=virtual_file, mode='rb')
+    file_doc = warc.WARCFile(fileobj=decompressed_file)
     documents = []
     for record in file_doc:
         if "WARC-TREC-ID" in record:
@@ -135,7 +174,8 @@ def load_file(path_file, path_new_file):
             document = get_sentences(document)
             documents.append({"id-doc": id_doc, "text": document})
     file_doc.close()
-    gz.close()
+    decompressed_file.close()
+    virtual_file.close()
     print "Subprocess Finished Loading: " + path_file
     document_index = write_file(path_new_file, documents)
     return document_index
@@ -163,7 +203,7 @@ def write_file(path_file, documents):
 if __name__ == "__main__":
     print "ClueWeb12 Preprocessing Started"
     start = time.time()
-    clueweb_parser = ClueWeb12Parser(ROOT_CORPUS, PATH_RESULTS, ROOT_PROCESSED, PATH_INDEX)
+    clueweb_parser = ClueWeb12Parser(ROOT_CORPUS, PATH_RESULTS, ROOT_PROCESSED, PATH_INDEX, PATH_STATUS)
     clueweb_parser.load_result_lists()
     clueweb_parser.process_files()
     print "ClueWeb12 Preprocessing Finished. Time: " + str(time.time() - start) + "s"
