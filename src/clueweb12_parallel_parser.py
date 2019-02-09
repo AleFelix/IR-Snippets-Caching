@@ -47,6 +47,7 @@ class ClueWeb12Parser(object):
         self.path_status = path_status
         self.results_queue = multiprocessing.Manager().Queue()
         self.current_id_proc = 0
+        self.flushed_times = 0
 
     def get_document_path(self, id_doc):
         items_id_doc = id_doc.split("-")
@@ -122,15 +123,22 @@ class ClueWeb12Parser(object):
                 raise
         write_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print "[" + write_time + "] Flushing Index to disk"
-        with open(self.path_index, mode="w+") as file_index:
-            file_index.write(cPickle.dumps(self.document_index))
+        with open(self.path_index, mode="wb") as file_index:
+            cPickle.dump(self.document_index, file_index)
         with codecs.open(self.path_status, mode="a", encoding="utf-8") as file_status:
             file_status.write("[" + write_time + "]\n\tINDEX SIZE: " + str(len(self.document_index)) + "\n")
             file_status.write("\tADDED FILES: " + str(self.num_processed_files) + "\n")
+        self.flushed_times += 1
+        if self.flushed_times % 50 == 0:
+            time_index = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+            directory_index = os.path.dirname(self.path_index)
+            name_old_index = os.path.basename(self.path_index) + "_" + time_index
+            path_old_index = os.path.join(directory_index, name_old_index)
+            os.rename(self.path_index, path_old_index)
 
     def read_index(self):
         try:
-            with open(self.path_index, mode="r") as file_index:
+            with open(self.path_index, mode="rb") as file_index:
                 self.document_index = cPickle.load(file_index)
         except IOError:
             pass
@@ -210,7 +218,7 @@ def write_file(path_file, documents):
             raise
     document_index = {}
     # with LOCK_WRITE:
-    with codecs.open(path_file, mode="w+", encoding="utf-8") as output_file:
+    with codecs.open(path_file, mode="w", encoding="utf-8") as output_file:
         for document in documents:
             id_doc = document["id-doc"]
             output_file.write(id_doc + "\n")
