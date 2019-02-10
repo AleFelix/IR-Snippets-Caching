@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 
+import sys
 import collections
+
+MEGABYTE_MULTIPLIER = 1000000
 
 
 class FileLoader(object):
     def __init__(self, cache_size):
-        self.MEGABYTE_MULTIPLIER = 1000000
-        self.max_cache_size = cache_size
+        self.max_cache_size = cache_size * MEGABYTE_MULTIPLIER
         self.files = collections.OrderedDict()
         self.current_size = 0
 
@@ -24,3 +26,7 @@ class FileLoader(object):
     def load_file(self, path_file):
         with open(path_file, mode="rb") as file_binary_stream:
             self.files[path_file] = file_binary_stream.read()
+            self.current_size += sys.getsizeof(self.files[path_file])
+        while self.current_size > self.max_cache_size:
+            popped_path_file, popped_file = self.files.popitem(last=False)
+            self.current_size -= sys.getsizeof(popped_file)
