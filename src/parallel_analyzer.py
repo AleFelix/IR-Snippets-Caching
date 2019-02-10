@@ -25,17 +25,18 @@ DEBUG = False
 
 class SnippetAnalyzer(object):
     def __init__(self, path_results, path_queries, path_stopwords, path_index, root_corpus, snippet_size, max_queries,
-                 surrogate_size, ssnippet_sizes, ssnippet_threshold, cache_memory_sizes, dir_output):
+                 surrogate_size, ssnippet_sizes, ssnippet_threshold, cache_memory_sizes, dir_output, file_cache_size,
+                 training_limit):
         self.path_results = path_results
         self.path_queries = path_queries
         self.path_stopwords = path_stopwords
         self.path_index = path_index
         self.root_corpus = root_corpus
-        self.snippet_size = snippet_size
-        self.max_queries = max_queries
+        self.snippet_size = int(snippet_size)
+        self.max_queries = int(max_queries)
         self.surrogate_size = float(surrogate_size)
         self.ssnippet_sizes = ssnippet_sizes
-        self.ssnippet_threshold = ssnippet_threshold
+        self.ssnippet_threshold = float(ssnippet_threshold)
         self.stopwords = None
         self.last_query_line = -1
         self.last_results_line = -1
@@ -57,8 +58,11 @@ class SnippetAnalyzer(object):
         self.num_cpus = multiprocessing.cpu_count()
         self.pool = multiprocessing.Pool()
         self.processes_tasks = []
-        self.file_loader = FileLoader(200)
+        self.file_loader = FileLoader(int(file_cache_size))
         self.docs_index = {}
+        self.training_limit = int(training_limit)
+        self.processed_queries = None
+        self.training_mode = None
 
     def create_output_dir(self):
         try:
@@ -121,46 +125,49 @@ class SnippetAnalyzer(object):
         return statistics
 
     def update_cache_times(self, doc_type, cache_type, time, check_hits, ss_size=None, hits_caches=None):
-        if ss_size:
-            statistics = self.statistics[doc_type][ss_size]
-        else:
-            statistics = self.statistics[doc_type]
-        statistics["times"][cache_type.max_memory_size] += time
-        if hits_caches is None:
-            hits_caches = cache_type.check_hits_extra_caches()
-        for mem_size in hits_caches:
-            if not check_hits or (check_hits and not hits_caches[mem_size]):
-                statistics["times"][mem_size] += time
+        if not self.training_mode:
+            if ss_size:
+                statistics = self.statistics[doc_type][ss_size]
+            else:
+                statistics = self.statistics[doc_type]
+            statistics["times"][cache_type.max_memory_size] += time
+            if hits_caches is None:
+                hits_caches = cache_type.check_hits_extra_caches()
+            for mem_size in hits_caches:
+                if not check_hits or (check_hits and not hits_caches[mem_size]):
+                    statistics["times"][mem_size] += time
 
     def update_cache_hits(self, doc_type, cache_type, ss_size=None, hits_caches=None):
-        if ss_size:
-            statistics = self.statistics[doc_type][ss_size]
-        else:
-            statistics = self.statistics[doc_type]
-        statistics["hits"][cache_type.max_memory_size] += 1
-        if hits_caches is None:
-            hits_caches = cache_type.check_hits_extra_caches()
-        for mem_size in hits_caches:
-            if hits_caches[mem_size]:
-                statistics["hits"][mem_size] += 1
+        if not self.training_mode:
+            if ss_size:
+                statistics = self.statistics[doc_type][ss_size]
+            else:
+                statistics = self.statistics[doc_type]
+            statistics["hits"][cache_type.max_memory_size] += 1
+            if hits_caches is None:
+                hits_caches = cache_type.check_hits_extra_caches()
+            for mem_size in hits_caches:
+                if hits_caches[mem_size]:
+                    statistics["hits"][mem_size] += 1
 
     def update_quality_hits(self, doc_type, cache_type, has_quality, ss_size=None, hits_caches=None):
-        if ss_size:
-            statistics = self.statistics[doc_type][ss_size]
-        else:
-            statistics = self.statistics[doc_type]
-        if has_quality:
-            statistics["quality_hits"][cache_type.max_memory_size] += 1
-        else:
-            statistics["quality_misses"][cache_type.max_memory_size] += 1
-        if hits_caches is None:
-            hits_caches = cache_type.check_hits_extra_caches()
-        for mem_size in hits_caches:
-            if hits_caches[mem_size]:
-                if has_quality:
-                    statistics["quality_hits"][mem_size] += 1
-                else:
-                    statistics["quality_misses"][mem_size] += 1
+        if not self.training_mode:
+            if ss_size:
+                statistics = self.statistics[doc_type][ss_size]
+            else:
+                statistics = self.statistics[doc_type]
+            if has_quality:
+                statistics["quality_hits"][cache_type.max_memory_size] += 1
+            else:
+                statistics["quality_misses"][cache_type.max_memory_size] += 1
+            if hits_caches is None:
+                hits_caches = cache_type.check_hits_extra_caches()
+            for mem_size in hits_caches:
+                if hits_caches[mem_size]:
+                    if has_quality:
+                        statistics["quality_hits"][mem_size] += 1
+                    else:
+                        statistics["quality_misses"][mem_size] += 1
 
     def load_stopwords(self):
         self.stopwords = []
@@ -215,6 +222,8 @@ class SnippetAnalyzer(object):
         self.load_stopwords()
         self.load_index()
         self.more_queries = True
+        self.processed_queries = 0
+        self.training_mode = True
         while self.more_queries:
             self.load_queries()
             self.load_result_lists()
@@ -235,6 +244,7 @@ class SnippetAnalyzer(object):
                     and current_pos_doc >= len(self.results_per_id_query[list_ids_queries[current_pos_query]]):
                 current_pos_doc = 0
                 current_pos_query += 1
+                self.processed_queries += 1
                 if current_pos_query >= len(list_ids_queries):
                     finished_queries = True
             while not finished_queries and not list_ids_queries[current_pos_query] in self.results_per_id_query:
@@ -249,11 +259,13 @@ class SnippetAnalyzer(object):
                 if not loaded:
                     file_data = self.file_loader.get_file(self.filepath_docs[id_doc])
                     self.load_doc(id_doc, file_data, self.docs_index[id_doc])
-                self.send_job(TASKS["DOC"], id_doc, self.id_queries[id_query], True, extra_hits)
-                self.send_job(TASKS["SURR"], id_doc, self.id_queries[id_query], True)
+                self.send_job(TASKS["DOC"], id_doc, self.id_queries[id_query], was_hit=loaded, extra_hits=extra_hits)
+                self.send_job(TASKS["SURR"], id_doc, self.id_queries[id_query])
                 for ss_size in self.ssnippet_sizes:
-                    self.send_job(TASKS["SSNIPP"], id_doc, self.id_queries[id_query], True, None, ss_size)
+                    self.send_job(TASKS["SSNIPP"], id_doc, self.id_queries[id_query], ss_size=ss_size)
                 self.listen_answers()
+                if self.training_mode and self.processed_queries >= self.training_limit:
+                    self.training_mode = False
 
     def send_job(self, task, id_doc, query=None, was_hit=None, extra_hits=None, ss_size=None):
         if task == TASKS["DOC"]:
