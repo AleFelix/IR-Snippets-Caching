@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 
-import nltk
 import collections
 import re
 
 LIMIT = 0.3
 MAX_DISTANCE = 4
 MIN_SIZE = 3
-# TOKENIZER = nltk.tokenize.ToktokTokenizer()
 
 
 def translate(to_translate):
@@ -29,18 +27,24 @@ def get_terms_text(text, stop_words):
     return (token.lower() for token in fast_tokenize(text) if token not in stop_words and len(token) >= MIN_SIZE)
 
 
-def get_sentences(text_doc):
-    # text_doc = text_doc.replace("\n", " ")
-    all_sentences = []
-    for line in text_doc.splitlines():
-        sentences = nltk.sent_tokenize(line)
-        all_sentences.extend(sentences)
-    return all_sentences
+def get_terms_from_tokenized_text(tokenized_text, stop_words):
+    return (token for sentence in tokenized_text.splitlines() for token in sentence.split(",")
+            if token not in stop_words and len(token) >= MIN_SIZE)
+
+
+def get_terms_from_tokenized_sentence(tokenized_sentence, stop_words):
+    return (token for token in tokenized_sentence.split(",") if token not in stop_words and len(token) >= MIN_SIZE)
 
 
 def get_relevant_terms(text_doc, stop_words):
     stop_words = set(stop_words)
-    terms = list(get_terms_text(text_doc, stop_words))
+    terms = []
+    if type(text_doc) is list:
+        for sentence in text_doc:
+            terms_sent = list(get_terms_from_tokenized_sentence(sentence, stop_words))
+            terms.extend(terms_sent)
+    else:
+        terms = list(get_terms_from_tokenized_text(text_doc, stop_words))
     terms_dist = collections.Counter(terms)
     terms_limit = int(len(terms) * LIMIT)
     freq_count = 0
@@ -54,7 +58,7 @@ def get_relevant_terms(text_doc, stop_words):
 
 
 def compute_sentence_relevance(sentence, relevant_terms, stop_words):
-    sentence = list(get_terms_text(sentence, stop_words))
+    sentence = list(get_terms_from_tokenized_sentence(sentence, stop_words))
     segments_relevance = []
     number_relevants_segment = 0
     number_terms_found = 0
@@ -101,15 +105,17 @@ def compute_sentence_relevance(sentence, relevant_terms, stop_words):
     return max(segments_relevance) if segments_relevance else 0
 
 
-def compute_sentence_query_relevance(sentence, query):
-    sentence = (token.lower() for token in fast_tokenize(sentence) if len(token) >= MIN_SIZE)
+def compute_sentence_query_relevance(tokenized_sentence, query):
+    sentence = (token for token in tokenized_sentence.split(",") if len(token) >= MIN_SIZE)
     query_count = sum(1 for token in sentence if token in set(query))
     return (query_count ** 2) / float(len(query)) if len(query) > 0 else 0
 
 
 def summarize_document(text_doc, stop_words, max_size=None, query=None, max_sent=None, w_query=None, w_sent=None):
-    text_doc = " ".join(text_doc) if type(text_doc) is list else text_doc
-    all_sentences = get_sentences(text_doc)
+    if type(text_doc) is list:
+        all_sentences = text_doc
+    else:
+        all_sentences = text_doc.splitlines()
     if query is None:
         max_sent = int(len(all_sentences) * float(max_size))
     relevant_terms = get_relevant_terms(text_doc, stop_words)
@@ -141,11 +147,11 @@ def update_supersnippet(supersnippet, snippet, max_sentences, threshold, stop_wo
     sets_supersnippet = []
     if supersnippet is not None:
         for sentence_ss in supersnippet:
-            terms_sent_ss = set(get_terms_text(sentence_ss, stop_words))
+            terms_sent_ss = set(get_terms_from_tokenized_sentence(sentence_ss, stop_words))
             sets_supersnippet.append(terms_sent_ss)
     new_supersnippet = [] if supersnippet is None else list(supersnippet)
     for sentence in snippet:
-        terms_sent = set(get_terms_text(sentence, stop_words))
+        terms_sent = set(get_terms_from_tokenized_sentence(sentence, stop_words))
         best_match = {"index": None, "sim": 0}
         for index, terms_sent_ss in enumerate(sets_supersnippet):
             same_terms = terms_sent & terms_sent_ss
@@ -170,10 +176,10 @@ def has_good_quality(text, query, stop_words):
     terms_text = set()
     if type(text) is list:
         for sentence in text:
-            terms_sent = set(get_terms_text(sentence, stop_words))
+            terms_sent = set(get_terms_from_tokenized_sentence(sentence, stop_words))
             terms_text = terms_text.union(terms_sent)
     else:
-        terms_text = set(get_terms_text(text, stop_words))
+        terms_text = set(get_terms_from_tokenized_text(text, stop_words))
     same_terms = terms_query & terms_text
     # print "SAME TERMS"
     # print same_terms

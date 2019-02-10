@@ -3,7 +3,7 @@
 import os
 import codecs
 from datetime import datetime
-from document_parser import get_document_path, clean_html, get_html_doc_from_file_data_seek
+from document_parser import get_document_path, get_tokens_doc_from_file_data_seek
 from document_summarizer import generate_snippet, generate_summary, update_supersnippet, has_good_quality, \
     get_terms_text
 from cache_manager import DocumentsCache
@@ -14,6 +14,7 @@ import multiprocessing
 from threading import Thread
 from collections import deque
 import cProfile
+import cPickle
 
 RESULT_LIST_LENGTH = 10
 OUTPUT_FILENAME = "snippets_stats"
@@ -25,11 +26,12 @@ DEBUG = False
 
 
 class SnippetAnalyzer(object):
-    def __init__(self, path_results, path_queries, path_stopwords, root_corpus, snippet_size, max_queries,
+    def __init__(self, path_results, path_queries, path_stopwords, path_index, root_corpus, snippet_size, max_queries,
                  surrogate_size, ssnippet_sizes, ssnippet_threshold, cache_memory_sizes, dir_output):
         self.path_results = path_results
         self.path_queries = path_queries
         self.path_stopwords = path_stopwords
+        self.path_index = path_index
         self.root_corpus = root_corpus
         self.snippet_size = snippet_size
         self.max_queries = max_queries
@@ -63,6 +65,7 @@ class SnippetAnalyzer(object):
         self.results_queue = multiprocessing.Manager().Queue()
         self.finished_queries = False
         self.process_counter = 0
+        self.docs_index = {}
 
     def create_output_dir(self):
         try:
@@ -172,6 +175,10 @@ class SnippetAnalyzer(object):
             for line in file_stopwords:
                 self.stopwords.append(line.strip())
 
+    def load_index(self):
+        with open(self.path_index, mode="rb") as file_index:
+            self.docs_index = cPickle.load(file_index)
+
     def load_queries(self):
         with codecs.open(self.path_queries, mode="r", encoding="utf-8") as file_queries:
             self.num_of_loaded_queries = 0
@@ -213,6 +220,7 @@ class SnippetAnalyzer(object):
         print "STARTING WITH " + str(self.num_cpus) + " PROCESSES"
         self.create_output_dir()
         self.load_stopwords()
+        self.load_index()
         self.more_queries = True
         self.listening_thread = Thread(target=self.listen_answers)
         self.listening_thread.start()
@@ -252,9 +260,9 @@ class SnippetAnalyzer(object):
                 current_pos_doc += 1
                 loaded, extra_hits = self.check_loaded_doc(id_doc)
                 if not loaded:
-                    file_data, index_docs = self.file_loader.get_file(self.filepath_docs[id_doc])
+                    file_data = self.file_loader.get_file(self.filepath_docs[id_doc])
                     self.send_job(TASKS["LOAD"], id_doc, self.id_queries[id_query], file_data=file_data,
-                                  index_docs=index_docs)
+                                  index_doc=self.docs_index[id_doc])
                 else:
                     self.send_job(TASKS["DOC"], id_doc, self.id_queries[id_query], True, extra_hits)
                     self.send_job(TASKS["SURR"], id_doc, self.id_queries[id_query], True)
@@ -262,9 +270,9 @@ class SnippetAnalyzer(object):
                         self.send_job(TASKS["SSNIPP"], id_doc, self.id_queries[id_query], True, None, ss_size)
 
     def send_job(self, task, id_doc, query=None, was_hit=None, extra_hits=None, ss_size=None, file_data=None,
-                 index_docs=None):
+                 index_doc=None):
         if task == TASKS["LOAD"]:
-            self.start_load_doc(id_doc, query, file_data, index_docs)
+            self.start_load_doc(id_doc, query, file_data, index_doc)
         if task == TASKS["DOC"]:
             self.start_analyze_document(id_doc, query, was_hit, extra_hits)
         if task == TASKS["SURR"]:
@@ -378,14 +386,14 @@ class SnippetAnalyzer(object):
         extra_hits = self.cache_docs.check_hits_extra_caches()
         return loaded, extra_hits
 
-    def start_load_doc(self, id_doc, query, file_data, index_docs):
+    def start_load_doc(self, id_doc, query, file_data, index_doc):
         # print "SENDING START_LOAD TO " + str(id_proc)
         path_doc = self.filepath_docs[id_doc]
         if DEBUG:
-            job = self.pool.apply_async(profile_wld, (id_doc, path_doc, query, file_data, index_docs,
+            job = self.pool.apply_async(profile_wld, (id_doc, path_doc, query, file_data, index_doc,
                                                       self.results_queue, self.process_counter))
         else:
-            job = self.pool.apply_async(worker_load_doc, (id_doc, path_doc, query, file_data, index_docs,
+            job = self.pool.apply_async(worker_load_doc, (id_doc, path_doc, query, file_data, index_doc,
                                                           self.results_queue, self.process_counter))
         # self.processes_tasks.append({"job": job, "type": TASKS["LOAD"]})
         self.processes_tasks[self.process_counter] = job
@@ -492,8 +500,8 @@ class SnippetAnalyzer(object):
         self.update_cache_times("ssnippets", self.cache_ssnippets[ss_size], total_time, False, ss_size)
 
 
-def profile_wld(id_doc, path_doc, query, file_data, index_docs, results_queue, id_proc):
-    cProfile.runctx("worker_load_doc(id_doc, path_doc, query, file_data, index_docs, results_queue, id_proc)",
+def profile_wld(id_doc, path_doc, query, file_data, index_doc, results_queue, id_proc):
+    cProfile.runctx("worker_load_doc(id_doc, path_doc, query, file_data, index_doc, results_queue, id_proc)",
                     globals(), locals(), "profiling/profile_wld-%d.out" % id_proc)
 
 
@@ -516,13 +524,11 @@ def profile_wss(ssnippet, id_doc, text_doc, query, stopwords, snippet_size, ss_s
 
 
 # noinspection PyBroadException
-def worker_load_doc(id_doc, path_doc, query, file_data, index_docs, results_queue, id_proc):
+def worker_load_doc(id_doc, path_doc, query, file_data, index_doc, results_queue, id_proc):
     try:
         task_timer = timer.Timer()
         task_timer.restart()
-        # text_doc = get_html_doc(id_doc, path_doc)
-        text_doc = get_html_doc_from_file_data_seek(id_doc, file_data, index_docs)
-        text_doc = clean_html(text_doc)
+        text_doc = get_tokens_doc_from_file_data_seek(file_data, index_doc)
         task_timer.stop()
         load_time = task_timer.total_time
         # print "WORKER: DOC LOAD TIME: " + str(load_time)
@@ -535,53 +541,65 @@ def worker_load_doc(id_doc, path_doc, query, file_data, index_docs, results_queu
 
 def worker_analyze_document(text_doc, query, stopwords, snippet_size, was_hit, extra_hits, id_doc, results_queue,
                             id_proc):
-    task_timer = timer.Timer()
-    doc_has_quality = None
-    if was_hit:
-        doc_has_quality = has_good_quality(text_doc, query, stopwords)
-    task_timer.restart()
-    generate_snippet(text_doc, stopwords, snippet_size, query)
-    task_timer.stop()
-    # print "WORKER: DOC TIME: " + str(task_timer.total_time)
-    # return task_timer.total_time, doc_has_quality, was_hit, extra_hits, id_doc
-    results_queue.put({"TASK": TASKS["DOC"], "RESULT": (task_timer.total_time, doc_has_quality, was_hit, extra_hits,
-                                                        id_doc, id_proc)})
+    try:
+        task_timer = timer.Timer()
+        doc_has_quality = None
+        if was_hit:
+            doc_has_quality = has_good_quality(text_doc, query, stopwords)
+        task_timer.restart()
+        generate_snippet(text_doc, stopwords, snippet_size, query)
+        task_timer.stop()
+        # print "WORKER: DOC TIME: " + str(task_timer.total_time)
+        # return task_timer.total_time, doc_has_quality, was_hit, extra_hits, id_doc
+        results_queue.put({"TASK": TASKS["DOC"], "RESULT": (task_timer.total_time, doc_has_quality, was_hit, extra_hits,
+                                                            id_doc, id_proc)})
+    except Exception as ex:
+        print ex
+        traceback.print_exc()
 
 
 def worker_analyze_surrogate(surrogate, id_doc, text_doc, query, stopwords, snippet_size, surrogate_size,
                              results_queue, id_proc):
-    task_timer = timer.Timer()
-    if surrogate is None:
-        surrogate = generate_summary(text_doc, stopwords, surrogate_size)
-    surrogate_has_quality = has_good_quality(surrogate, query, stopwords)
-    task_timer.restart()
-    generate_snippet(surrogate, stopwords, snippet_size, query)
-    task_timer.stop()
-    # print "WORKER: SURR TIME: " + str(task_timer.total_time)
-    # return task_timer.total_time, surrogate_has_quality, id_doc, surrogate
-    results_queue.put({"TASK": TASKS["SURR"], "RESULT": (task_timer.total_time, surrogate_has_quality, id_doc,
-                                                         surrogate, id_proc)})
+    try:
+        task_timer = timer.Timer()
+        if surrogate is None:
+            surrogate = generate_summary(text_doc, stopwords, surrogate_size)
+        surrogate_has_quality = has_good_quality(surrogate, query, stopwords)
+        task_timer.restart()
+        generate_snippet(surrogate, stopwords, snippet_size, query)
+        task_timer.stop()
+        # print "WORKER: SURR TIME: " + str(task_timer.total_time)
+        # return task_timer.total_time, surrogate_has_quality, id_doc, surrogate
+        results_queue.put({"TASK": TASKS["SURR"], "RESULT": (task_timer.total_time, surrogate_has_quality, id_doc,
+                                                             surrogate, id_proc)})
+    except Exception as ex:
+        print ex
+        traceback.print_exc()
 
 
 def worker_analyze_supersnippet(ssnippet, id_doc, text_doc, query, stopwords, snippet_size, ss_size, ss_threshold,
                                 results_queue, id_proc):
-    task_timer = timer.Timer()
-    was_hit = ssnippet is not None
-    if not was_hit:
-        task_timer.restart()
-        snippet = generate_snippet(text_doc, stopwords, snippet_size, query)
-        ssnippet = update_supersnippet(ssnippet, snippet, ss_size, ss_threshold, stopwords)
-        task_timer.stop()
-    task_timer.start()
-    snippet = generate_snippet(ssnippet, stopwords, snippet_size, query)
-    task_timer.stop()
-    has_quality = has_good_quality(snippet, query, stopwords)
-    if not has_quality and was_hit:
+    try:
+        task_timer = timer.Timer()
+        was_hit = ssnippet is not None
+        if not was_hit:
+            task_timer.restart()
+            snippet = generate_snippet(text_doc, stopwords, snippet_size, query)
+            ssnippet = update_supersnippet(ssnippet, snippet, ss_size, ss_threshold, stopwords)
+            task_timer.stop()
         task_timer.start()
-        snippet = generate_snippet(text_doc, stopwords, snippet_size, query)
-        update_supersnippet(ssnippet, snippet, ss_size, ss_threshold, stopwords)
+        snippet = generate_snippet(ssnippet, stopwords, snippet_size, query)
         task_timer.stop()
-    # print "WORKER: SSNIP TIME: " + str(task_timer.total_time)
-    # return task_timer.total_time, has_quality, id_doc, ss_size, ssnippet
-    results_queue.put({"TASK": TASKS["SSNIPP"], "RESULT": (task_timer.total_time, has_quality, id_doc, ss_size,
-                                                           ssnippet, id_proc)})
+        has_quality = has_good_quality(snippet, query, stopwords)
+        if not has_quality and was_hit:
+            task_timer.start()
+            snippet = generate_snippet(text_doc, stopwords, snippet_size, query)
+            update_supersnippet(ssnippet, snippet, ss_size, ss_threshold, stopwords)
+            task_timer.stop()
+        # print "WORKER: SSNIP TIME: " + str(task_timer.total_time)
+        # return task_timer.total_time, has_quality, id_doc, ss_size, ssnippet
+        results_queue.put({"TASK": TASKS["SSNIPP"], "RESULT": (task_timer.total_time, has_quality, id_doc, ss_size,
+                                                               ssnippet, id_proc)})
+    except Exception as ex:
+        print ex
+        traceback.print_exc()
