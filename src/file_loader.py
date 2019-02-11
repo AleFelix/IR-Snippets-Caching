@@ -14,12 +14,11 @@ class FileLoader(object):
 
     def get_file(self, path_file):
         if path_file in self.files:
-            print "CACHE HIT!!"
             file_data = self.files.pop(path_file)
             self.files[path_file] = file_data
             return self.files[path_file]
         else:
-            print "CACHE MISS!!"
+            print "CACHE MISS: " + path_file
             self.load_file(path_file)
             return self.files[path_file]
 

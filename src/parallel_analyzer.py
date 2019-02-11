@@ -245,6 +245,7 @@ class SnippetAnalyzer(object):
                 self.listen_answers()
                 current_pos_doc = 0
                 current_pos_query += 1
+                print "Processed Query #" + str(self.processed_queries)
                 self.processed_queries += 1
                 if self.training_mode and self.processed_queries >= self.training_limit:
                     self.training_mode = False
@@ -252,6 +253,10 @@ class SnippetAnalyzer(object):
                     finished_queries = True
             while not finished_queries and not list_ids_queries[current_pos_query] in self.results_per_id_query:
                 current_pos_query += 1
+                print "Processed Query #" + str(self.processed_queries)
+                self.processed_queries += 1
+                if self.training_mode and self.processed_queries >= self.training_limit:
+                    self.training_mode = False
                 if current_pos_query >= len(list_ids_queries):
                     finished_queries = True
             if not finished_queries:
