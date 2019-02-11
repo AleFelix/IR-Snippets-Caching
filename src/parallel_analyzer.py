@@ -71,9 +71,12 @@ class SnippetAnalyzer(object):
             if not os.path.isdir(self.dir_output):
                 raise
 
-    def write_output_statistics(self):
+    def write_output_statistics(self, num_processed_queries=None):
         datetime_suffix = self.start_datetime.strftime("-%Y%m%d-%H%M%S")
-        stats_filename = OUTPUT_FILENAME + datetime_suffix + "." + OUTPUT_EXT
+        if num_processed_queries is None:
+            stats_filename = OUTPUT_FILENAME + datetime_suffix + "." + OUTPUT_EXT
+        else:
+            stats_filename = OUTPUT_FILENAME + datetime_suffix + "." + OUTPUT_EXT + "_" + str(num_processed_queries)
         path_output_file = os.path.join(self.dir_output, stats_filename)
         with codecs.open(path_output_file, mode="w", encoding="UTF-8") as output_file:
             output_file.write("STATISTICS OF SNIPPETS CACHING METHODS\n")
@@ -249,6 +252,10 @@ class SnippetAnalyzer(object):
                 self.processed_queries += 1
                 if self.training_mode and self.processed_queries >= self.training_limit:
                     self.training_mode = False
+                if not self.training_mode and self.processed_queries % 500 == 0:
+                    print "Writing Partial Statistics to Disk"
+                    self.statistics["total_time"] = (datetime.now() - self.start_datetime).total_seconds()
+                    self.write_output_statistics(self.processed_queries)
                 if current_pos_query >= len(list_ids_queries):
                     finished_queries = True
             while not finished_queries and not list_ids_queries[current_pos_query] in self.results_per_id_query:
@@ -257,6 +264,10 @@ class SnippetAnalyzer(object):
                 self.processed_queries += 1
                 if self.training_mode and self.processed_queries >= self.training_limit:
                     self.training_mode = False
+                if not self.training_mode and self.processed_queries % 500 == 0:
+                    print "Writing Partial Statistics to Disk"
+                    self.statistics["total_time"] = (datetime.now() - self.start_datetime).total_seconds()
+                    self.write_output_statistics(self.processed_queries)
                 if current_pos_query >= len(list_ids_queries):
                     finished_queries = True
             if not finished_queries:
