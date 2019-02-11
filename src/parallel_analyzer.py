@@ -223,7 +223,7 @@ class SnippetAnalyzer(object):
         self.load_index()
         self.more_queries = True
         self.processed_queries = 0
-        self.training_mode = True
+        self.training_mode = self.training_limit > 0
         while self.more_queries:
             self.load_queries()
             self.load_result_lists()
@@ -242,9 +242,12 @@ class SnippetAnalyzer(object):
             # print "POS_DOC: " + str(current_pos_doc)
             if not finished_queries \
                     and current_pos_doc >= len(self.results_per_id_query[list_ids_queries[current_pos_query]]):
+                self.listen_answers()
                 current_pos_doc = 0
                 current_pos_query += 1
                 self.processed_queries += 1
+                if self.training_mode and self.processed_queries >= self.training_limit:
+                    self.training_mode = False
                 if current_pos_query >= len(list_ids_queries):
                     finished_queries = True
             while not finished_queries and not list_ids_queries[current_pos_query] in self.results_per_id_query:
@@ -263,9 +266,6 @@ class SnippetAnalyzer(object):
                 self.send_job(TASKS["SURR"], id_doc, self.id_queries[id_query])
                 for ss_size in self.ssnippet_sizes:
                     self.send_job(TASKS["SSNIPP"], id_doc, self.id_queries[id_query], ss_size=ss_size)
-                self.listen_answers()
-                if self.training_mode and self.processed_queries >= self.training_limit:
-                    self.training_mode = False
 
     def send_job(self, task, id_doc, query=None, was_hit=None, extra_hits=None, ss_size=None):
         if task == TASKS["DOC"]:
