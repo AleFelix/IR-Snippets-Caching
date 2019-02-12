@@ -57,12 +57,13 @@ class SnippetAnalyzer(object):
 
         self.num_cpus = multiprocessing.cpu_count()
         self.pool = multiprocessing.Pool(maxtasksperchild=30000)
-        self.processes_tasks = []
+        self.processes_tasks = {}
         self.file_loader = FileLoader(int(file_cache_size))
         self.docs_index = {}
         self.training_limit = int(training_limit)
         self.processed_queries = None
         self.training_mode = None
+        self.last_process_id = 0
 
     def create_output_dir(self):
         try:
@@ -293,35 +294,40 @@ class SnippetAnalyzer(object):
 
     def listen_answers(self):
         while len(self.processes_tasks) > 0:
-            for pos_task, task in enumerate(self.processes_tasks):
+            for id_proc in self.processes_tasks.keys():
+                task = self.processes_tasks[id_proc]
                 try:
                     job = task["job"].get(timeout=300)
                 except Exception as ex:
                     print "An Exception ocurred while waiting for a Process: " + str(ex)
+                    traceback.print_exc()
                     job = None
                 if job is not None:
                     if task["type"] == TASKS["DOC"]:
                         doc_has_quality, total_time, was_hit, extra_hits, id_doc = job
                         self.finish_analyze_document(doc_has_quality, total_time, was_hit, extra_hits, id_doc)
                         # print "CLOSED TASK DOC"
-                        self.processes_tasks.pop(pos_task)
+                        self.processes_tasks.pop(id_proc)
                     if task["type"] == TASKS["SURR"]:
                         total_time, has_quality, id_doc, surrogate = job
                         self.finish_analyze_surrogate(total_time, has_quality, id_doc, surrogate)
                         # print "CLOSED TASK SURR"
-                        self.processes_tasks.pop(pos_task)
+                        self.processes_tasks.pop(id_proc)
                     if task["type"] == TASKS["SSNIPP"]:
                         total_time, has_quality, id_doc, ss_size, ssnippet = job
                         self.finish_analyze_supersnippet(total_time, has_quality, id_doc, ss_size, ssnippet)
                         # print "CLOSED TASK SSNIPP"
-                        self.processes_tasks.pop(pos_task)
+                        self.processes_tasks.pop(id_proc)
                 else:
                     if task["type"] == TASKS["DOC"]:
                         print "Process Analyzing Document Failed"
+                        self.processes_tasks.pop(id_proc)
                     if task["type"] == TASKS["SURR"]:
                         print "Process Analyzing Surrogate Failed"
+                        self.processes_tasks.pop(id_proc)
                     if task["type"] == TASKS["SSNIPP"]:
                         print "Process Analyzing SuperSnippet Failed"
+                        self.processes_tasks.pop(id_proc)
 
     def check_loaded_doc(self, id_doc):
         self.statistics["total_requests"] += 1
@@ -347,7 +353,8 @@ class SnippetAnalyzer(object):
         else:
             job = self.pool.apply_async(worker_analyze_document, (text_doc, query, self.stopwords, self.snippet_size,
                                                                   was_hit, extra_hits, id_doc))
-        self.processes_tasks.append({"job": job, "type": TASKS["DOC"]})
+        self.processes_tasks[self.last_process_id] = {"job": job, "type": TASKS["DOC"]}
+        self.last_process_id += 1
 
     def finish_analyze_document(self, total_time, doc_has_quality, was_hit, extra_hits, id_doc):
         if was_hit:
@@ -372,7 +379,8 @@ class SnippetAnalyzer(object):
         else:
             job = self.pool.apply_async(worker_analyze_surrogate, (surrogate, id_doc, text_doc, query, self.stopwords,
                                                                    self.snippet_size, self.surrogate_size))
-        self.processes_tasks.append({"job": job, "type": TASKS["SURR"]})
+        self.processes_tasks[self.last_process_id] = {"job": job, "type": TASKS["SURR"]}
+        self.last_process_id += 1
 
     def finish_analyze_surrogate(self, total_time, has_quality, id_doc, surrogate):
         cached_surrogate = self.cache_surrogates.get_document(id_doc)
@@ -397,7 +405,8 @@ class SnippetAnalyzer(object):
             job = self.pool.apply_async(worker_analyze_supersnippet, (ssnippet, id_doc, text_doc, query, self.stopwords,
                                                                       self.snippet_size, ss_size,
                                                                       self.ssnippet_threshold))
-        self.processes_tasks.append({"job": job, "type": TASKS["SSNIPP"]})
+        self.processes_tasks[self.last_process_id] = {"job": job, "type": TASKS["SSNIPP"]}
+        self.last_process_id += 1
 
     def finish_analyze_supersnippet(self, total_time, has_quality, id_doc, ss_size, ssnippet):
         cached_ssnippet = self.cache_ssnippets[ss_size].get_document(id_doc)
@@ -468,7 +477,7 @@ def worker_analyze_supersnippet(ssnippet, id_doc, text_doc, query, stopwords, sn
         was_hit = ssnippet is not None
         if not was_hit:
             task_timer.restart()
-            snippet = generate_snippet(text_doc, stopwords, snippet_size, query)
+            snippet = generate_snippet(text_doc, stopwords, ss_size, query)
             ssnippet = update_supersnippet(ssnippet, snippet, ss_size, ss_threshold, stopwords)
             task_timer.stop()
         task_timer.start()
@@ -477,8 +486,9 @@ def worker_analyze_supersnippet(ssnippet, id_doc, text_doc, query, stopwords, sn
         has_quality = has_good_quality(snippet, query, stopwords)
         if not has_quality and was_hit:
             task_timer.start()
-            snippet = generate_snippet(text_doc, stopwords, snippet_size, query)
+            snippet = generate_snippet(text_doc, stopwords, ss_size, query)
             ssnippet = update_supersnippet(ssnippet, snippet, ss_size, ss_threshold, stopwords)
+            generate_snippet(ssnippet, stopwords, snippet_size, query)
             task_timer.stop()
         # print "WORKER: SSNIP TIME: " + str(task_timer.total_time)
         return task_timer.total_time, has_quality, id_doc, ss_size, ssnippet

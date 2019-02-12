@@ -139,7 +139,7 @@ def generate_summary(text_doc, stop_words, max_size):
     return summarize_document(text_doc, stop_words, max_size)
 
 
-def generate_snippet(text_doc, stop_words, max_sentences, query, query_weight=0.8, sent_weight=0.2):
+def generate_snippet(text_doc, stop_words, max_sentences, query, query_weight=0.9, sent_weight=0.1):
     return summarize_document(text_doc, stop_words, None, query, max_sentences, query_weight, sent_weight)
 
 
