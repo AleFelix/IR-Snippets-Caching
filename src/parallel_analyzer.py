@@ -87,7 +87,7 @@ class SnippetAnalyzer(object):
                 for mem_size in self.cache_memory_sizes:
                     output_file.write("\t" + str(mem_size) + "MB CACHE:\n")
                     if doc_type in ["docs", "surrogates"]:
-                        output_file.write("\t\tTIME: {0:.2f}s\n".format(self.statistics[doc_type]["times"][mem_size]))
+                        output_file.write("\t\tTIME: {0:.6f}s\n".format(self.statistics[doc_type]["times"][mem_size]))
                         output_file.write("\t\tHITS: {0} docs\n".format(self.statistics[doc_type]["hits"][mem_size]))
                         output_file.write("\t\tQUALITY MISSES: {0} docs\n"
                                           .format(self.statistics[doc_type]["quality_misses"][mem_size]))
@@ -95,7 +95,7 @@ class SnippetAnalyzer(object):
                                           .format(self.statistics[doc_type]["quality_hits"][mem_size]))
                     else:
                         for ss_size in self.ssnippet_sizes:
-                            output_file.write("\t\tTIME[{0}]: {1:.2f}s\n"
+                            output_file.write("\t\tTIME[{0}]: {1:.6f}s\n"
                                               .format(ss_size, self.statistics[doc_type][ss_size]["times"][mem_size]))
                             output_file.write("\t\tHITS[{0}]: {1} docs\n"
                                               .format(ss_size, self.statistics[doc_type][ss_size]["hits"][mem_size]))
@@ -129,42 +129,48 @@ class SnippetAnalyzer(object):
         statistics["total_time"] = 0.0
         return statistics
 
-    def update_cache_times(self, doc_type, cache_type, time, check_hits, ss_size=None, hits_caches=None):
+    def update_cache_times(self, doc_type, cache_type, update_max, time, check_hits=None, ss_size=None,
+                           hits_caches=None):
         if not self.training_mode:
             if ss_size:
                 statistics = self.statistics[doc_type][ss_size]
             else:
                 statistics = self.statistics[doc_type]
-            statistics["times"][cache_type.max_memory_size] += time
+            if update_max:
+                statistics["times"][cache_type.max_memory_size] += time
             if hits_caches is None:
                 hits_caches = cache_type.check_hits_extra_caches()
+                if doc_type == "surrogates":
+                    pass
             for mem_size in hits_caches:
                 if not check_hits or (check_hits and not hits_caches[mem_size]):
                     statistics["times"][mem_size] += time
 
-    def update_cache_hits(self, doc_type, cache_type, ss_size=None, hits_caches=None):
+    def update_cache_hits(self, doc_type, cache_type, update_max, ss_size=None, hits_caches=None):
         if not self.training_mode:
             if ss_size:
                 statistics = self.statistics[doc_type][ss_size]
             else:
                 statistics = self.statistics[doc_type]
-            statistics["hits"][cache_type.max_memory_size] += 1
+            if update_max:
+                statistics["hits"][cache_type.max_memory_size] += 1
             if hits_caches is None:
                 hits_caches = cache_type.check_hits_extra_caches()
             for mem_size in hits_caches:
                 if hits_caches[mem_size]:
                     statistics["hits"][mem_size] += 1
 
-    def update_quality_hits(self, doc_type, cache_type, has_quality, ss_size=None, hits_caches=None):
+    def update_quality_hits(self, doc_type, cache_type, update_max, has_quality, ss_size=None, hits_caches=None):
         if not self.training_mode:
             if ss_size:
                 statistics = self.statistics[doc_type][ss_size]
             else:
                 statistics = self.statistics[doc_type]
-            if has_quality:
-                statistics["quality_hits"][cache_type.max_memory_size] += 1
-            else:
-                statistics["quality_misses"][cache_type.max_memory_size] += 1
+            if update_max:
+                if has_quality:
+                    statistics["quality_hits"][cache_type.max_memory_size] += 1
+                else:
+                    statistics["quality_misses"][cache_type.max_memory_size] += 1
             if hits_caches is None:
                 hits_caches = cache_type.check_hits_extra_caches()
             for mem_size in hits_caches:
@@ -359,15 +365,11 @@ class SnippetAnalyzer(object):
         self.last_process_id += 1
 
     def finish_analyze_document(self, total_time, doc_has_quality, was_hit, extra_hits, id_doc):
-        if was_hit:
-            self.update_cache_hits("docs", self.cache_docs, None, extra_hits)
-            # print "CACHE HIT DOC: TOTAL: " + str(self.statistics["docs"]["hits"])
-            self.update_quality_hits("docs", self.cache_docs, doc_has_quality, None, extra_hits)
-        else:
-            self.update_cache_times("docs", self.cache_docs, self.load_times_docs[id_doc], True, None, extra_hits)
-            # print "UPDATE LOAD DOC TIME: " + str(self.load_times_docs[id_doc])
-        self.update_cache_times("docs", self.cache_docs, total_time, False, None, extra_hits)
-        # print "UPDATE DOC TIME: " + str(total_time)
+        self.update_cache_hits("docs", self.cache_docs, was_hit, hits_caches=extra_hits)
+        self.update_quality_hits("docs", self.cache_docs, was_hit, doc_has_quality, hits_caches=extra_hits)
+        self.update_cache_times("docs", self.cache_docs, not was_hit, self.load_times_docs[id_doc], check_hits=True,
+                                hits_caches=extra_hits)
+        self.update_cache_times("docs", self.cache_docs, True, total_time, check_hits=False, hits_caches=extra_hits)
 
     def start_analyze_surrogate(self, query, id_doc):
         # print "SENDING START_ANALYZE_SURR TO " + str(id_proc)
@@ -386,15 +388,13 @@ class SnippetAnalyzer(object):
 
     def finish_analyze_surrogate(self, total_time, has_quality, id_doc, surrogate):
         cached_surrogate = self.cache_surrogates.get_document(id_doc)
-        if cached_surrogate is not None:
-            self.update_cache_hits("surrogates", self.cache_surrogates)
-            self.update_quality_hits("surrogates", self.cache_surrogates, has_quality, None)
-            # print "CACHE HIT FOR SURROGATE OF DOC: " + str(id_doc)
-        else:
-            self.update_cache_times("surrogates", self.cache_surrogates,
-                                    self.load_times_docs[id_doc] * self.surrogate_size, True)
-            self.cache_surrogates.add_document(id_doc, surrogate)
-        self.update_cache_times("surrogates", self.cache_surrogates, total_time, False)
+        was_hit = (cached_surrogate is not None)
+        self.update_cache_hits("surrogates", self.cache_surrogates, was_hit)
+        self.update_quality_hits("surrogates", self.cache_surrogates, was_hit, has_quality)
+        load_time_surrogate = self.load_times_docs[id_doc] * self.surrogate_size
+        self.update_cache_times("surrogates", self.cache_surrogates, not was_hit, load_time_surrogate, check_hits=True)
+        self.update_cache_times("surrogates", self.cache_surrogates, True, total_time, check_hits=False)
+        self.cache_surrogates.add_document(id_doc, surrogate)
 
     def start_analyze_supersnippet(self, query, id_doc, ss_size):
         # print "SENDING START_ANALYZE_SS TO " + str(id_proc)
@@ -412,15 +412,14 @@ class SnippetAnalyzer(object):
 
     def finish_analyze_supersnippet(self, total_time, has_quality, id_doc, ss_size, ssnippet):
         cached_ssnippet = self.cache_ssnippets[ss_size].get_document(id_doc)
-        if cached_ssnippet is not None:
-            self.update_cache_hits("ssnippets", self.cache_ssnippets[ss_size], ss_size)
-            self.update_quality_hits("ssnippets", self.cache_ssnippets[ss_size], has_quality, ss_size)
-        else:
-            self.update_cache_times("ssnippets", self.cache_ssnippets[ss_size], self.load_times_docs[id_doc], True,
-                                    ss_size)
-        # print "ADDED SSNIPET[" + str(ss_size) + "] TO CACHE FOR DOC: " + str(id_doc)
+        was_hit = (cached_ssnippet is not None)
+        self.update_cache_hits("ssnippets", self.cache_ssnippets[ss_size], was_hit, ss_size=ss_size)
+        self.update_quality_hits("ssnippets", self.cache_ssnippets[ss_size], was_hit, has_quality, ss_size=ss_size)
+        self.update_cache_times("ssnippets", self.cache_ssnippets[ss_size], not was_hit, self.load_times_docs[id_doc],
+                                check_hits=True, ss_size=ss_size)
+        self.update_cache_times("ssnippets", self.cache_ssnippets[ss_size], True, total_time, check_hits=False,
+                                ss_size=ss_size)
         self.cache_ssnippets[ss_size].add_document(id_doc, ssnippet)
-        self.update_cache_times("ssnippets", self.cache_ssnippets[ss_size], total_time, False, ss_size)
 
 
 def profile_wad(text_doc, query, stopwords, snippet_size, was_hit, extra_hits, id_doc, results_queue, id_proc):
