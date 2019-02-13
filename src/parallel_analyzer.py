@@ -3,16 +3,17 @@
 import os
 import codecs
 from datetime import datetime
-from document_parser import get_document_path, get_tokens_doc_from_file_data_seek
+from document_parser import get_document_path, get_tokens_doc_with_seek
 from document_summarizer import generate_snippet, generate_summary, update_supersnippet, has_good_quality, \
     get_terms_text
 from cache_manager import DocumentsCache
 import timer
 import traceback
-from file_loader import FileLoader
+# from file_loader import FileLoader
 import multiprocessing
 import cProfile
 import cPickle
+import pdb
 
 RESULT_LIST_LENGTH = 10
 OUTPUT_FILENAME = "snippets_stats"
@@ -56,9 +57,9 @@ class SnippetAnalyzer(object):
         self.start_datetime = datetime.now()
 
         self.num_cpus = multiprocessing.cpu_count()
-        self.pool = multiprocessing.Pool(maxtasksperchild=30000)
+        self.pool = multiprocessing.Pool(maxtasksperchild=1000)
         self.processes_tasks = {}
-        self.file_loader = FileLoader(int(file_cache_size))
+        # self.file_loader = FileLoader(int(file_cache_size))
         self.docs_index = {}
         self.training_limit = int(training_limit)
         self.processed_queries = None
@@ -277,8 +278,8 @@ class SnippetAnalyzer(object):
                 current_pos_doc += 1
                 loaded, extra_hits = self.check_loaded_doc(id_doc)
                 if not loaded:
-                    file_data = self.file_loader.get_file(self.filepath_docs[id_doc])
-                    self.load_doc(id_doc, file_data, self.docs_index[id_doc])
+                    # file_data = self.file_loader.get_file(self.filepath_docs[id_doc])
+                    self.load_doc(id_doc, self.filepath_docs[id_doc], self.docs_index[id_doc])
                 self.send_job(TASKS["DOC"], id_doc, self.id_queries[id_query], was_hit=loaded, extra_hits=extra_hits)
                 self.send_job(TASKS["SURR"], id_doc, self.id_queries[id_query])
                 for ss_size in self.ssnippet_sizes:
@@ -301,6 +302,7 @@ class SnippetAnalyzer(object):
                 except Exception as ex:
                     print "An Exception ocurred while waiting for a Process: " + str(ex)
                     traceback.print_exc()
+                    pdb.set_trace()
                     job = None
                 if job is not None:
                     if task["type"] == TASKS["DOC"]:
@@ -336,10 +338,10 @@ class SnippetAnalyzer(object):
         extra_hits = self.cache_docs.check_hits_extra_caches()
         return loaded, extra_hits
 
-    def load_doc(self, id_doc, file_data, index_doc):
+    def load_doc(self, id_doc, file_path, index_doc):
         task_timer = timer.Timer()
         task_timer.restart()
-        text_doc = get_tokens_doc_from_file_data_seek(file_data, index_doc)
+        text_doc = get_tokens_doc_with_seek(file_path, index_doc)
         task_timer.stop()
         self.load_times_docs[id_doc] = task_timer.total_time
         self.cache_docs.add_document(id_doc, text_doc)
