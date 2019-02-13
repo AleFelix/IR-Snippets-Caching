@@ -17,23 +17,29 @@ class DocumentsCache(object):
             self.extra_caches.append(ExtraDocumentsCache(memory_size))
 
     def get_document(self, id_doc):
-        document = self.documents.get(id_doc, None)
-        if document is not None:
-            self.add_document(id_doc, document)
+        document = None
+        document_data = self.documents.get(id_doc, None)
+        if document_data is not None:
+            self.add_document(id_doc, document_data["tokens"], document_data["size"])
+            document = document_data["tokens"]
         else:
             for extra_cache in self.extra_caches:
                 extra_cache.check_hit(id_doc)
         return document
 
-    def add_document(self, id_doc, document):
-        doc_size = sys.getsizeof(document)
-        popped_doc = self.documents.pop(id_doc, None)
-        if popped_doc is None:
+    def add_document(self, id_doc, document, doc_size=None):
+        if doc_size is None:
+            doc_size = sys.getsizeof(document)
+            if type(document) is list:
+                for sentence in document:
+                    doc_size += sys.getsizeof(sentence)
+        popped_doc_data = self.documents.pop(id_doc, None)
+        if popped_doc_data is None:
             self.memory_size += doc_size
-        self.documents[id_doc] = document
-        while self.memory_size > self.max_memory_size * MEGABYTE_MULTIPLIER:
-            popped_doc_id, popped_doc = self.documents.popitem(last=False)
-            self.memory_size -= sys.getsizeof(popped_doc)
+        self.documents[id_doc] = {"tokens": document, "size": doc_size}
+        while len(self.documents) > 1 and self.memory_size > self.max_memory_size * MEGABYTE_MULTIPLIER:
+            popped_doc_id, popped_doc_data = self.documents.popitem(last=False)
+            self.memory_size -= popped_doc_data["size"]
         for extra_cache in self.extra_caches:
             extra_cache.add_document(id_doc, doc_size)
 
@@ -44,7 +50,9 @@ class DocumentsCache(object):
         return cache_hits
 
     def get_document_without_updating(self, id_doc):
-        return self.documents.get(id_doc, None)
+        document_data = self.documents.get(id_doc, None)
+        if document_data is not None:
+            return document_data["tokens"]
 
 
 class ExtraDocumentsCache(object):
