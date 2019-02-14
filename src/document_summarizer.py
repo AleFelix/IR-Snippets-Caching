@@ -121,7 +121,10 @@ def summarize_document(text_doc, stop_words, max_size=None, query=None, max_sent
     relevant_terms = get_relevant_terms(text_doc, stop_words)
     all_relevances = []
     for sentence in all_sentences:
-        sent_relevance = compute_sentence_relevance(sentence, relevant_terms, stop_words)
+        if w_sent is None or w_sent > 0:
+            sent_relevance = compute_sentence_relevance(sentence, relevant_terms, stop_words)
+        else:
+            sent_relevance = 0
         if query is not None:
             sent_query_relevance = compute_sentence_query_relevance(sentence, query)
             sent_relevance = w_query * sent_query_relevance + w_sent * sent_relevance
@@ -139,7 +142,7 @@ def generate_summary(text_doc, stop_words, max_size):
     return summarize_document(text_doc, stop_words, max_size)
 
 
-def generate_snippet(text_doc, stop_words, max_sentences, query, query_weight=0.9, sent_weight=0.1):
+def generate_snippet(text_doc, stop_words, max_sentences, query, query_weight=1, sent_weight=0):
     return summarize_document(text_doc, stop_words, None, query, max_sentences, query_weight, sent_weight)
 
 
