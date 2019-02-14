@@ -146,6 +146,8 @@ def generate_snippet(text_doc, stop_words, max_sentences, query, query_weight=0.
 def update_supersnippet(supersnippet, snippet, max_sentences, threshold, stop_words):
     sets_supersnippet = []
     if supersnippet is not None:
+        if type(supersnippet) is not list:
+            supersnippet = supersnippet.splitlines()
         for sentence_ss in supersnippet:
             terms_sent_ss = set(get_terms_from_tokenized_sentence(sentence_ss, stop_words))
             sets_supersnippet.append(terms_sent_ss)

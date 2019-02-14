@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 
-import codecs
 import StringIO
 
 
@@ -23,7 +22,7 @@ def get_tokens_doc_from_file_data_seek(binary_file_data, index_doc):
 
 
 def get_tokens_doc_with_seek(path_file, index_doc):
-    with codecs.open(path_file, mode="r", encoding="utf-8") as file_stream:
+    with open(path_file, mode="rb") as file_stream:
         file_stream.seek(index_doc["start"])
         text_tokens = file_stream.read(index_doc["length"])
-        return text_tokens
+        return unicode(text_tokens, errors="ignore")
