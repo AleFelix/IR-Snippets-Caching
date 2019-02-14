@@ -14,7 +14,6 @@ import multiprocessing
 from loky import get_reusable_executor
 import cProfile
 import cPickle
-import pudb
 
 RESULT_LIST_LENGTH = 10
 OUTPUT_FILENAME = "snippets_stats"
@@ -309,6 +308,7 @@ class SnippetAnalyzer(object):
                 except Exception as ex:
                     print "An Exception ocurred while waiting for a Process: " + str(ex)
                     traceback.print_exc()
+                    import pudb
                     pudb.set_trace()
                     job_result = None
                 if job_result is not None:
@@ -374,7 +374,7 @@ class SnippetAnalyzer(object):
 
     def start_analyze_surrogate(self, query, id_doc):
         # print "SENDING START_ANALYZE_SURR TO " + str(id_proc)
-        surrogate = self.cache_surrogates.get_document(id_doc)
+        surrogate = self.cache_surrogates.get_document_without_updating(id_doc)
         text_doc = None
         if surrogate is None:
             text_doc = self.cache_docs.get_document_without_updating(id_doc)
@@ -399,7 +399,7 @@ class SnippetAnalyzer(object):
 
     def start_analyze_supersnippet(self, query, id_doc, ss_size):
         # print "SENDING START_ANALYZE_SS TO " + str(id_proc)
-        ssnippet = self.cache_ssnippets[ss_size].get_document(id_doc)
+        ssnippet = self.cache_ssnippets[ss_size].get_document_without_updating(id_doc)
         text_doc = self.cache_docs.get_document_without_updating(id_doc)
         if DEBUG:
             job = self.executor.submit(profile_wss, ssnippet, id_doc, text_doc, query, self.stopwords,
@@ -426,7 +426,7 @@ def profile_wad(text_doc, query, stopwords, snippet_size, was_hit, extra_hits, i
     prof = cProfile.Profile()
     result = prof.runcall(worker_analyze_document, text_doc, query, stopwords, snippet_size, was_hit, extra_hits,
                           id_doc)
-    prof.dump_stats("profiling_loky/profile_wad-%d.out" % (id_proc % 10))
+    prof.dump_stats("profiling_loky/profile_wad-%d.out" % (id_proc % 15))
     return result
 
 
@@ -434,7 +434,7 @@ def profile_was(surrogate, id_doc, text_doc, query, stopwords, snippet_size, sur
     prof = cProfile.Profile()
     result = prof.runcall(worker_analyze_surrogate, surrogate, id_doc, text_doc, query, stopwords, snippet_size,
                           surrogate_size)
-    prof.dump_stats("profiling_loky/profile_was-%d.out" % (id_proc % 10))
+    prof.dump_stats("profiling_loky/profile_was-%d.out" % (id_proc % 15))
     return result
 
 
@@ -442,7 +442,7 @@ def profile_wss(ssnippet, id_doc, text_doc, query, stopwords, snippet_size, ss_s
     prof = cProfile.Profile()
     result = prof.runcall(worker_analyze_supersnippet, ssnippet, id_doc, text_doc, query, stopwords, snippet_size,
                           ss_size, ss_threshold)
-    prof.dump_stats("profiling_loky/profile_wss-%d.out" % (id_proc % 10))
+    prof.dump_stats("profiling_loky/profile_wss-%d.out" % (id_proc % 15))
     return result
 
 

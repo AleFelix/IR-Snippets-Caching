@@ -57,8 +57,8 @@ def get_relevant_terms(text_doc, stop_words):
     return relevant_terms
 
 
-def compute_sentence_relevance(sentence, relevant_terms, stop_words):
-    sentence = list(get_terms_from_tokenized_sentence(sentence, stop_words))
+def compute_sentence_relevance(terms_sentence, relevant_terms):
+    sentence = terms_sentence
     segments_relevance = []
     number_relevants_segment = 0
     number_terms_found = 0
@@ -105,36 +105,53 @@ def compute_sentence_relevance(sentence, relevant_terms, stop_words):
     return max(segments_relevance) if segments_relevance else 0
 
 
-def compute_sentence_query_relevance(tokenized_sentence, query):
-    sentence = (token for token in tokenized_sentence.split(",") if len(token) >= MIN_SIZE)
-    query_count = sum(1 for token in sentence if token in set(query))
+def compute_sentence_query_relevance(terms_sentence, query):
+    query_count = sum(1 for token in terms_sentence if token in set(query))
     return (query_count ** 2) / float(len(query)) if len(query) > 0 else 0
 
 
 def summarize_document(text_doc, stop_words, max_size=None, query=None, max_sent=None, w_query=None, w_sent=None):
+    doc_terms_length = 0
+    all_terms_sentences = []
     if type(text_doc) is list:
         all_sentences = text_doc
     else:
         all_sentences = text_doc.splitlines()
     if query is None:
-        max_sent = int(len(all_sentences) * float(max_size))
+        max_sent = len(all_sentences)
     relevant_terms = get_relevant_terms(text_doc, stop_words)
     all_relevances = []
     for sentence in all_sentences:
+        terms_sentence = list(get_terms_from_tokenized_sentence(sentence, stop_words))
         if w_sent is None or w_sent > 0:
-            sent_relevance = compute_sentence_relevance(sentence, relevant_terms, stop_words)
+            sent_relevance = compute_sentence_relevance(terms_sentence, relevant_terms)
         else:
             sent_relevance = 0
         if query is not None:
-            sent_query_relevance = compute_sentence_query_relevance(sentence, query)
+            sent_query_relevance = compute_sentence_query_relevance(terms_sentence, query)
             sent_relevance = w_query * sent_query_relevance + w_sent * sent_relevance
+        if query is None:
+            all_terms_sentences.append(terms_sentence)
+            doc_terms_length += len(terms_sentence)
         all_relevances.append(sent_relevance)
     sorted_positions = sorted(range(len(all_relevances)), key=lambda i: all_relevances[i], reverse=True)
     if len(sorted_positions) > max_sent:
         sorted_positions = sorted_positions[:max_sent]
     top_sentences = []
-    for position in sorted(sorted_positions):
-        top_sentences.append(all_sentences[position])
+    if query is None:
+        surr_terms_length = int(doc_terms_length * float(max_size))
+        for position in sorted(sorted_positions):
+            if len(all_terms_sentences[position]) > surr_terms_length:
+                top_sentences.append(",".join(all_terms_sentences[position][:surr_terms_length]))
+                break
+            else:
+                top_sentences.append(",".join(all_terms_sentences[position]))
+                surr_terms_length -= len(all_terms_sentences[position])
+                if surr_terms_length <= 0:
+                    break
+    else:
+        for position in sorted(sorted_positions):
+            top_sentences.append(all_sentences[position])
     return top_sentences
 
 
