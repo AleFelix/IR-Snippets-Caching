@@ -358,7 +358,7 @@ class SnippetAnalyzer(object):
         text_doc = self.cache_docs.get_document(id_doc)
         if DEBUG:
             job = self.executor.submit(profile_wad, text_doc, query, self.stopwords, self.snippet_size, was_hit,
-                                       extra_hits, id_doc)
+                                       extra_hits, id_doc, self.last_process_id)
         else:
             job = self.executor.submit(worker_analyze_document, text_doc, query, self.stopwords, self.snippet_size,
                                        was_hit, extra_hits, id_doc)
@@ -380,7 +380,7 @@ class SnippetAnalyzer(object):
             text_doc = self.cache_docs.get_document_without_updating(id_doc)
         if DEBUG:
             job = self.executor.submit(profile_was, surrogate, id_doc, text_doc, query, self.stopwords,
-                                       self.snippet_size, self.surrogate_size)
+                                       self.snippet_size, self.surrogate_size, self.last_process_id)
         else:
             job = self.executor.submit(worker_analyze_surrogate, surrogate, id_doc, text_doc, query, self.stopwords,
                                        self.snippet_size, self.surrogate_size)
@@ -403,7 +403,7 @@ class SnippetAnalyzer(object):
         text_doc = self.cache_docs.get_document_without_updating(id_doc)
         if DEBUG:
             job = self.executor.submit(profile_wss, ssnippet, id_doc, text_doc, query, self.stopwords,
-                                       self.snippet_size, ss_size, self.ssnippet_threshold)
+                                       self.snippet_size, ss_size, self.ssnippet_threshold, self.last_process_id)
         else:
             job = self.executor.submit(worker_analyze_supersnippet, ssnippet, id_doc, text_doc, query, self.stopwords,
                                        self.snippet_size, ss_size, self.ssnippet_threshold)
@@ -422,22 +422,28 @@ class SnippetAnalyzer(object):
         self.cache_ssnippets[ss_size].add_document(id_doc, ssnippet)
 
 
-def profile_wad(text_doc, query, stopwords, snippet_size, was_hit, extra_hits, id_doc, results_queue, id_proc):
-    cProfile.runctx("worker_analyze_document(text_doc, query, stopwords, snippet_size, was_hit, extra_hits, id_doc)",
-                    globals(), locals(), "profiling/profile_wad-%d.out" % id_proc)
+def profile_wad(text_doc, query, stopwords, snippet_size, was_hit, extra_hits, id_doc, id_proc):
+    prof = cProfile.Profile()
+    result = prof.runcall(worker_analyze_document, text_doc, query, stopwords, snippet_size, was_hit, extra_hits,
+                          id_doc)
+    prof.dump_stats("profiling_loky/profile_wad-%d.out" % (id_proc % 10))
+    return result
 
 
-def profile_was(surrogate, id_doc, text_doc, query, stopwords, snippet_size, surrogate_size, results_queue, id_proc):
-    cProfile.runctx("worker_analyze_surrogate(surrogate, id_doc, text_doc, query, stopwords, snippet_size,"
-                    "surrogate_size)", globals(), locals(),
-                    "profiling/profile_was-%d.out" % id_proc)
+def profile_was(surrogate, id_doc, text_doc, query, stopwords, snippet_size, surrogate_size, id_proc):
+    prof = cProfile.Profile()
+    result = prof.runcall(worker_analyze_surrogate, surrogate, id_doc, text_doc, query, stopwords, snippet_size,
+                          surrogate_size)
+    prof.dump_stats("profiling_loky/profile_was-%d.out" % (id_proc % 10))
+    return result
 
 
-def profile_wss(ssnippet, id_doc, text_doc, query, stopwords, snippet_size, ss_size, ss_threshold, results_queue,
-                id_proc):
-    cProfile.runctx("worker_analyze_supersnippet(ssnippet, id_doc, text_doc, query, stopwords, snippet_size, ss_size,"
-                    "ss_threshold)", globals(), locals(),
-                    "profiling/profile_wss-%d.out" % id_proc)
+def profile_wss(ssnippet, id_doc, text_doc, query, stopwords, snippet_size, ss_size, ss_threshold, id_proc):
+    prof = cProfile.Profile()
+    result = prof.runcall(worker_analyze_supersnippet, ssnippet, id_doc, text_doc, query, stopwords, snippet_size,
+                          ss_size, ss_threshold)
+    prof.dump_stats("profiling_loky/profile_wss-%d.out" % (id_proc % 10))
+    return result
 
 
 def worker_analyze_document(text_doc, query, stopwords, snippet_size, was_hit, extra_hits, id_doc):
