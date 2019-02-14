@@ -13,7 +13,7 @@ import traceback
 import multiprocessing
 import cProfile
 import cPickle
-import pdb
+import pudb
 
 RESULT_LIST_LENGTH = 10
 OUTPUT_FILENAME = "snippets_stats"
@@ -308,7 +308,7 @@ class SnippetAnalyzer(object):
                 except Exception as ex:
                     print "An Exception ocurred while waiting for a Process: " + str(ex)
                     traceback.print_exc()
-                    pdb.set_trace()
+                    pudb.set_trace()
                     job = None
                 if job is not None:
                     if task["type"] == TASKS["DOC"]:
